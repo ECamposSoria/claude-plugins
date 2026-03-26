@@ -1,0 +1,17 @@
+{
+  "name": "eze-claude-plugins",
+  "owner": {
+    "name": "ECamposSoria"
+  },
+  "metadata": {
+    "description": "Personal Claude Code plugins",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "stitch",
+      "description": "Google Stitch MCP - AI-powered UI design tool for creating and editing screens via the Model Context Protocol",
+      "source": "./plugins/stitch"
+    }
+  ]
+}
