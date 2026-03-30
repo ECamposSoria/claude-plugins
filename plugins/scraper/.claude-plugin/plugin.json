@@ -1,0 +1,9 @@
+{
+  "name": "scraper",
+  "version": "1.0.0",
+  "description": "Self-hosted web scraper with AI extraction — scrape any site, extract structured data, compare prices across marketplaces",
+  "author": {
+    "name": "AltoMetodo"
+  },
+  "repository": "https://github.com/AltoMetodo/scraping2"
+}

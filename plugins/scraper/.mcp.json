@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "scraper": {
+      "type": "streamableHttp",
+      "url": "http://localhost:3100/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SCRAPER_MCP_TOKEN}"
+      }
+    }
+  }
+}

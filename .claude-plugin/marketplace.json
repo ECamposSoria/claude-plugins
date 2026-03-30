@@ -12,6 +12,11 @@
       "name": "stitch",
       "description": "Google Stitch MCP - AI-powered UI design tool for creating and editing screens via the Model Context Protocol",
       "source": "./plugins/stitch"
+    },
+    {
+      "name": "scraper",
+      "description": "Self-hosted web scraper with AI extraction - scrape any site including social media behind robots.txt, extract structured data, compare prices",
+      "source": "./plugins/scraper"
     }
   ]
 }
