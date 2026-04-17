@@ -42,41 +42,53 @@ The MCP server has no generic file upload. Two options:
 
 ### Option 2A — Python script using the plugin's OAuth creds (automated)
 
-The plugin config at `~/.claude/plugins/cache/eze-claude-plugins/google-docs/1.0.0/.mcp.json` holds `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. The MCP server already maintains a refresh token for the authorized account. Piggyback on it by running a short script that reads the stored token and uses `google-api-python-client`:
+Piggyback on the MCP server's existing OAuth refresh token at `~/.config/google-docs-mcp/token.json` plus the `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` env vars (exported in `~/.bashrc`).
 
 ```bash
-pip install --user google-api-python-client google-auth-httplib2 google-auth-oauthlib
+pip install --user google-api-python-client google-auth-httplib2
 ```
 
 ```python
 # upload_pptx_to_drive.py
-import sys, json, pathlib
+import json, os, pathlib, sys
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google.oauth2.credentials import Credentials
 
-# The google-docs-mcp server stores its token at ~/.config/google-docs-mcp/token.json
-# (path may vary; check the MCP server's source if not there).
 TOKEN_PATH = pathlib.Path.home() / ".config" / "google-docs-mcp" / "token.json"
-creds = Credentials.from_authorized_user_file(str(TOKEN_PATH),
-    ["https://www.googleapis.com/auth/drive.file"])
+raw = json.loads(TOKEN_PATH.read_text())
+
+# google-docs-mcp stores tokens as {access_token, refresh_token, scope, token_type, expiry_date}
+# — NOT the shape Credentials.from_authorized_user_file expects. Construct manually.
+scope_val = raw.get("scope") or raw.get("scopes")
+scopes = scope_val.split() if isinstance(scope_val, str) else list(scope_val or [])
+
+creds = Credentials(
+    token=raw.get("access_token"),
+    refresh_token=raw.get("refresh_token"),
+    token_uri="https://oauth2.googleapis.com/token",
+    client_id=os.environ["GOOGLE_CLIENT_ID"],
+    client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+    scopes=scopes,
+)
 
 drive = build("drive", "v3", credentials=creds)
 
 local_path = sys.argv[1]                                  # e.g. /tmp/deck.pptx
-folder_id  = sys.argv[2] if len(sys.argv) > 2 else None   # optional parent folder
+folder_id  = next((a for a in sys.argv[2:] if not a.startswith("--")), None)
 convert    = "--convert" in sys.argv                      # convert to native Slides
 
 body = {"name": pathlib.Path(local_path).name}
 if folder_id:
     body["parents"] = [folder_id]
 if convert:
-    body["mimeType"] = "application/vnd.google-apps.presentation"  # triggers conversion
+    body["mimeType"] = "application/vnd.google-apps.presentation"
 
-media = MediaFileUpload(local_path,
+media = MediaFileUpload(
+    local_path,
     mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    resumable=True)
-
+    resumable=True,
+)
 file = drive.files().create(body=body, media_body=media, fields="id,name,webViewLink").execute()
 print(file["webViewLink"])
 ```
@@ -87,7 +99,7 @@ Usage:
 python upload_pptx_to_drive.py /tmp/deck.pptx <folderId> --convert
 ```
 
-**Token path caveat:** the exact path depends on how `google-docs-mcp` stores tokens. If `~/.config/google-docs-mcp/token.json` doesn't exist, `find ~ -name "token.json" 2>/dev/null | grep -i google` to locate it before hard-coding.
+Drive scope requirement: the stored token must already include `https://www.googleapis.com/auth/drive` or `drive.file`. If uploads 403, re-authorize the MCP with the broader scope.
 
 ### Option 2B — Manual upload (zero code)
 
