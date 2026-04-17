@@ -17,6 +17,11 @@
       "name": "scraper",
       "description": "Self-hosted web scraper with AI extraction - scrape any site including social media behind robots.txt, extract structured data, compare prices",
       "source": "./plugins/scraper"
+    },
+    {
+      "name": "google-docs",
+      "description": "Google Docs, Sheets & Drive MCP - read, write, format documents, manage spreadsheets and Drive files",
+      "source": "./plugins/google-docs"
     }
   ]
 }

@@ -1,0 +1,8 @@
+{
+  "name": "google-docs",
+  "version": "1.0.0",
+  "description": "Google Docs, Sheets & Drive MCP integration - read, write, format documents and manage files",
+  "author": {
+    "name": "Eze Campos"
+  }
+}
