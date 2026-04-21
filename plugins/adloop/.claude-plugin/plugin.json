@@ -1,0 +1,9 @@
+{
+  "name": "adloop",
+  "version": "1.0.0",
+  "description": "AdLoop MCP — Google Ads + GA4 read/write with safety guardrails (dry-run, budget caps, Broad Match protection). Manage campaigns, keywords, ads, and tracking from your IDE.",
+  "author": {
+    "name": "ECamposSoria"
+  },
+  "repository": "https://github.com/kLOsk/adloop"
+}

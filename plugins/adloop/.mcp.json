@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "adloop": {
+      "type": "stdio",
+      "command": "/home/eze/.adloop/venv/bin/python",
+      "args": ["-m", "adloop"]
+    }
+  }
+}

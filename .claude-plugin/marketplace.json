@@ -22,6 +22,11 @@
       "name": "google-docs",
       "description": "Google Docs, Sheets & Drive MCP - read, write, format documents, manage spreadsheets and Drive files",
       "source": "./plugins/google-docs"
+    },
+    {
+      "name": "adloop",
+      "description": "AdLoop MCP - Google Ads + GA4 read/write with dry-run safety, budget caps, and Broad Match protection. Manage campaigns, keywords, ads, tracking, and attribution from your IDE.",
+      "source": "./plugins/adloop"
     }
   ]
 }
