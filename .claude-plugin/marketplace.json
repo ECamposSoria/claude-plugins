@@ -27,6 +27,11 @@
       "name": "adloop",
       "description": "AdLoop MCP - Google Ads + GA4 read/write with dry-run safety, budget caps, and Broad Match protection. Manage campaigns, keywords, ads, tracking, and attribution from your IDE.",
       "source": "./plugins/adloop"
+    },
+    {
+      "name": "nano-banana-multi",
+      "description": "Multi-provider image generation: Google Gemini (Flash, Pro) + OpenAI gpt-image-2. Single CLI surface, provider selected via --model. Forked from buildatscale-claude-code/nano-banana-pro to add OpenAI support.",
+      "source": "./plugins/nano-banana-multi"
     }
   ]
 }
