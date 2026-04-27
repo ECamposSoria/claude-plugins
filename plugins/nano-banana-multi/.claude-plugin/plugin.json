@@ -2,5 +2,8 @@
   "name": "nano-banana-multi",
   "version": "0.1.0",
   "description": "Multi-provider image generation skill: Google Gemini (Flash, Pro) + OpenAI gpt-image-2.",
-  "author": "eze"
+  "author": {
+    "name": "ECamposSoria"
+  },
+  "repository": "https://github.com/ECamposSoria/claude-plugins"
 }
