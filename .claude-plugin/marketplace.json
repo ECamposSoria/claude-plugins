@@ -32,6 +32,11 @@
       "name": "nano-banana-multi",
       "description": "Multi-provider image generation: Google Gemini (Flash, Pro) + OpenAI gpt-image-2. Single CLI surface, provider selected via --model. Forked from buildatscale-claude-code/nano-banana-pro to add OpenAI support.",
       "source": "./plugins/nano-banana-multi"
+    },
+    {
+      "name": "website-builder",
+      "description": "Website builder skill with 21st.dev Magic MCP for production-ready component generation, Framer Motion animations, and ui-ux-pro-max design system integration",
+      "source": "./plugins/website-builder"
     }
   ]
 }
