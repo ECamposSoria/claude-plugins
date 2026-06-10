@@ -5,7 +5,16 @@
       "args": [
         "-y",
         "@21st-dev/magic@latest",
-        "API_KEY=2e8fb3f1d1dc56c5c1fe029652be7d88da18f06a0840e97c1c209726b130bb5f"
+        "API_KEY=${MAGIC_API_KEY}"
+      ]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--headless=true",
+        "--isolated=true"
       ]
     }
   }
