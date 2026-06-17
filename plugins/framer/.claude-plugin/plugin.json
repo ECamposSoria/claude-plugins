@@ -1,0 +1,10 @@
+{
+  "name": "framer",
+  "version": "0.0.1",
+  "description": "Framer Agent — connect Claude Code directly to your Framer projects (canvas, CMS, code components, styles, localization, publishing) via the official @framer/agent CLI. Note: Framer uses Skills, not an MCP server.",
+  "author": {
+    "name": "Framer (packaged by ECamposSoria)"
+  },
+  "homepage": "https://www.framer.com/agents/external/",
+  "repository": "https://github.com/ECamposSoria/claude-plugins"
+}

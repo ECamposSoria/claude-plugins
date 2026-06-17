@@ -37,6 +37,11 @@
       "name": "website-builder",
       "description": "Website builder skill with 21st.dev Magic MCP for production-ready component generation, Framer Motion animations, and ui-ux-pro-max design system integration",
       "source": "./plugins/website-builder"
+    },
+    {
+      "name": "framer",
+      "description": "Framer Agent - connect Claude Code directly to Framer projects (canvas, CMS, code components, styles, localization, publishing) via the official @framer/agent CLI. Skill-based (Framer has no MCP server).",
+      "source": "./plugins/framer"
     }
   ]
 }
