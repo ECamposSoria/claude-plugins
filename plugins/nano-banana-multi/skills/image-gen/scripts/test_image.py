@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import pytest
-from image import _openai_size
+from image import _pixel_size
 
 
 @pytest.mark.parametrize(
@@ -26,11 +26,11 @@ from image import _openai_size
         ("portrait",  "4K", "2160x3840"),
     ],
 )
-def test_openai_size_supported(aspect, size, expected):
-    assert _openai_size(aspect, size) == expected
+def test_pixel_size_supported(aspect, size, expected):
+    assert _pixel_size(aspect, size) == expected
 
 
-def test_openai_size_4k_square_falls_back_to_2k_square():
+def test_pixel_size_4k_square_falls_back_to_2k_square():
     # 4K square (3840x3840 = 14.7M px) exceeds the 8.29M px cap;
     # the helper must downgrade to 2K square rather than return an invalid size.
-    assert _openai_size("square", "4K") == "2048x2048"
+    assert _pixel_size("square", "4K") == "2048x2048"
