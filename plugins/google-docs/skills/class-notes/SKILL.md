@@ -6,6 +6,45 @@ argument-hint: [google-doc-url-or-id] + class transcript
 allowed-tools: mcp__plugin_google-docs_google-docs__readDocument, mcp__plugin_google-docs_google-docs__appendMarkdown, mcp__plugin_google-docs_google-docs__findAndReplace, mcp__plugin_google-docs_google-docs__deleteRange, mcp__plugin_google-docs_google-docs__applyParagraphStyle, mcp__plugin_google-docs_google-docs__applyTextStyle, Bash, Read, Write
 ---
 
+## Pre-flight: token health check (RUN BEFORE ANYTHING ELSE)
+
+This skill depends on the `google-docs` MCP server, which uses an OAuth refresh token at `~/.config/google-docs-mcp/token.json`. If that token is missing, malformed, or revoked, the MCP fails at session start and **none** of its `mcp__plugin_google-docs_google-docs__*` tools register — every call will fail with "tool not found".
+
+**Step 1 — probe the token + MCP authorization** (single Bash call):
+
+```bash
+TOK=~/.config/google-docs-mcp/token.json
+([ -f "$TOK" ] && python3 -c "import json,sys;sys.exit(0 if json.load(open('$TOK')).get('refresh_token') else 1)" 2>/dev/null \
+  && timeout 8 bash -c '(printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"p\",\"version\":\"0\"}}}";sleep .5)|/home/eze/.nvm/versions/node/v22.22.1/bin/google-docs-mcp 2>&1' \
+    | grep -q "Google API client authorized successfully" \
+  && echo PREFLIGHT_OK) || echo PREFLIGHT_FAIL
+```
+
+**Step 2 — confirm MCP tools are registered in *this* session.** Even with a valid token, the harness only loads the MCP tools at session start. Run `ToolSearch` with `query="select:mcp__plugin_google-docs_google-docs__readDocument"`. If it returns the tool's schema, the MCP is live in this session. If it returns "No matching deferred tools found", treat it as a pre-flight failure.
+
+If both step 1 prints `PREFLIGHT_OK` **and** step 2 finds the tool, proceed to the skill body below.
+
+**Step 3 — if pre-flight fails, run the auth flow:**
+
+```bash
+pkill -f 'bin/google-docs-mcp auth' 2>/dev/null; rm -f /tmp/gdocs-auth.log
+nohup /home/eze/.nvm/versions/node/v22.22.1/bin/google-docs-mcp auth > /tmp/gdocs-auth.log 2>&1 &
+sleep 3; grep -oE 'https://accounts\.google\.com[^ ]+' /tmp/gdocs-auth.log
+```
+
+Then:
+1. Print the `https://accounts.google.com/...` URL to the user. Ask them to open it, click "Allow", and paste the **full callback URL** back to you (the URL the browser tries to load after consent — looks like `http://localhost:PORT/?state=...&code=...&scope=...`, even though the page itself fails to load because the listener is on the VM's localhost).
+2. Deliver the code to the listening server: `curl -sS "<callback-url>" -o /dev/null -w '%{http_code}\n'`. Expect `200`.
+3. Confirm: `grep "Authentication successful" /tmp/gdocs-auth.log`.
+
+**Step 4 — STOP and request a session restart.** Tell the user verbatim:
+
+> *Token refreshed. The MCP tool registry is locked at session start, so the new tools won't appear until you restart Claude Code. Please exit and reopen the session, then re-invoke the skill.*
+
+Do **not** attempt any `mcp__plugin_google-docs_google-docs__*` call in the same session as the auth flow — those tools are not registered and will fail.
+
+---
+
 # Class Notes Knowledge Base Skill
 
 This skill appends class notes to an existing Google Doc that uses the "Knowledge Base" format: a numbered list of topics, each with **Definición / Intuición / Ejemplo**, where refinements of previously-covered topics are injected **inline** into the original topic (not as a separate section).
