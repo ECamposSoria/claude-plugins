@@ -1,0 +1,9 @@
+{
+  "name": "codex-review",
+  "version": "1.0.0",
+  "description": "Loop a Codex CLI code review over your local commit(s) until Codex signs off. Spawns a dedicated review subagent (gpt-5.5 xhigh, spark fallback) that relays the verdict verbatim; fix, re-commit, re-review until clean.",
+  "author": {
+    "name": "ECamposSoria"
+  },
+  "repository": "https://github.com/ECamposSoria/claude-plugins"
+}

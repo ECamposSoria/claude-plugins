@@ -42,6 +42,11 @@
       "name": "framer",
       "description": "Framer Agent - connect Claude Code directly to Framer projects (canvas, CMS, code components, styles, localization, publishing) via the official @framer/agent CLI. Skill-based (Framer has no MCP server).",
       "source": "./plugins/framer"
+    },
+    {
+      "name": "codex-review",
+      "description": "Loop a Codex CLI code review over your local commit(s) until Codex signs off. Spawns a dedicated review subagent (gpt-5.5 xhigh, spark fallback) that relays the verdict verbatim; fix, re-commit, re-review until clean.",
+      "source": "./plugins/codex-review"
     }
   ]
 }
