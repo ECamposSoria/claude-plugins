@@ -47,6 +47,11 @@
       "name": "codex-review",
       "description": "Loop a Codex CLI code review over your local commit(s) until Codex signs off. Spawns a dedicated review subagent (gpt-5.5 xhigh, spark fallback) that relays the verdict verbatim; fix, re-commit, re-review until clean.",
       "source": "./plugins/codex-review"
+    },
+    {
+      "name": "video-studio",
+      "description": "Unified video skill — routes each request to the right leg: promo animation (Remotion via promo-video, or Hyperframes for GSAP/HTML), self-hosted footage editing (faster-whisper transcript + ffmpeg cuts), and hybrid compositing. Fully local, no SaaS.",
+      "source": "./plugins/video-studio"
     }
   ]
 }

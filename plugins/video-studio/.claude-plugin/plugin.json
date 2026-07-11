@@ -1,0 +1,8 @@
+{
+  "name": "video-studio",
+  "version": "1.0.0",
+  "description": "Unified video skill — routes each request to the right leg: promo animation (Remotion via promo-video, or Hyperframes for GSAP/HTML), self-hosted footage editing (faster-whisper transcript + ffmpeg cuts), and hybrid compositing. Fully local; no SaaS.",
+  "author": {
+    "name": "ECamposSoria"
+  }
+}

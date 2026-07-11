@@ -1,0 +1,10 @@
+# Python bytecode from running the leg scripts
+__pycache__/
+*.pyc
+
+# Local render/work artifacts (video projects are created in the user's CWD, not here)
+*.mp4
+*.mov
+*.webm
+*.transcript.json
+edl.json
