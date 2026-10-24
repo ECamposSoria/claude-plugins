@@ -85,7 +85,7 @@ Apple deliberately replaced the physics triplet (mass/stiffness/damping) with tw
 | Rotation | `0.8` | `0.4` |
 | Drawer / sheet | `0.8` | `0.3` |
 
-**Web mapping (Motion / Framer Motion):** the `bounce` + `duration` spring API maps closely to Apple's damping + response. A safe house style is `damping: 1.0` springs everywhere by default; reserve bounce for momentum-driven, physical interactions.
+**Web mapping (Motion / Framer Motion):** the `bounce` + `duration` spring API maps closely to Apple's damping + response. A safe house style is `damping: 1.0` springs everywhere by default; reserve bounce for momentum-driven, physical interactions. In Motion, a `duration`/`bounce` spring starts from zero velocity, so when a gesture hands off momentum (a drag release, a flick, a reversal) use the physics form and pass the release `velocity`.
 
 ```js
 import { animate } from 'motion';
@@ -93,8 +93,9 @@ import { animate } from 'motion';
 // Critically damped default (no overshoot)
 animate(el, { y: 0 }, { type: 'spring', bounce: 0, duration: 0.4 });
 
-// Momentum interaction — a little bounce, only because a flick preceded it
-animate(el, { y: target }, { type: 'spring', bounce: 0.2, duration: 0.4 });
+// Momentum interaction — a little overshoot, only because a flick preceded it.
+// Physics form so the flick's velocity carries into the spring (duration/bounce would drop it).
+animate(el, { y: target }, { type: 'spring', stiffness: 400, damping: 32, mass: 1, velocity: releaseVelocity });
 ```
 
 ## 5. Velocity handoff — the seam between drag and animation

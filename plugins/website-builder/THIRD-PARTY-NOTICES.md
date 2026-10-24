@@ -29,9 +29,13 @@ Local changes, all mechanical:
 8. `animate/RECIPES.md`, drag settle: the recipe promised to keep the drag's velocity but used a
    `duration`/`bounce` spring, which Motion resets to zero velocity (found by Codex review, verified against
    motion-dom 12.40). It now uses a stiffness/damping/mass spring with the measured release velocity.
+9. The same velocity issue across the set (Codex review, verified against motion-dom 12.40): a one-sentence
+   note after the `duration`/`bounce` spring advice in `apple-design`, `emil-design-eng`, `animate/SKILL.md`,
+   `review-animations/STANDARDS.md` and `improve-animations/AUDIT.md`; the momentum examples in `apple-design`
+   and `find-animation-opportunities` now use a physics spring with `velocity`.
 
 Security review on 2026-10-24: static scan plus a prose read of every file; no instructions outside each
 skill's stated job, no network fetches, no settings or permission edits.
 
-To update: diff the new upstream commit against these folders, re-apply the eight changes, update the commit
+To update: diff the new upstream commit against these folders, re-apply the nine changes, update the commit
 above.

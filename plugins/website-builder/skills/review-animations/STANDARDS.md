@@ -70,7 +70,7 @@ Feel natural because they simulate physics; no fixed duration — they settle on
 { type: "spring", mass: 1, stiffness: 100, damping: 10 }
 ```
 
-Keep bounce subtle (0.1–0.3); avoid bounce in most UI — reserve for drag-to-dismiss and playful interactions. Springs maintain velocity when interrupted (keyframes restart from zero), so they're ideal for gestures users may reverse mid-motion.
+Keep bounce subtle (0.1–0.3); avoid bounce in most UI — reserve for drag-to-dismiss and playful interactions. Springs maintain velocity when interrupted (keyframes restart from zero), so they're ideal for gestures users may reverse mid-motion. In Motion, a `duration`/`bounce` spring starts from zero velocity, so when a gesture hands off momentum (a drag release, a flick, a reversal) use the physics form and pass the release `velocity`.
 
 Mouse interactions: interpolate with `useSpring` rather than tying value directly to mouse position (direct = artificial, no momentum). Only do this when the motion is decorative.
 

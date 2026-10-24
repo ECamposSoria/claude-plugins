@@ -190,7 +190,7 @@ Keep bounce subtle (0.1-0.3) when used. Avoid bounce in most UI contexts. Use it
 
 ### Interruptibility advantage
 
-Springs maintain velocity when interrupted — CSS animations and keyframes restart from zero. This makes springs ideal for gestures users might change mid-motion. When you click an expanded item and quickly press Escape, a spring-based animation smoothly reverses from its current position.
+Springs maintain velocity when interrupted — CSS animations and keyframes restart from zero. In Motion, a `duration`/`bounce` spring starts from zero velocity, so when a gesture hands off momentum (a drag release, a flick, a reversal) use the physics form and pass the release `velocity`. This makes springs ideal for gestures users might change mid-motion. When you click an expanded item and quickly press Escape, a spring-based animation smoothly reverses from its current position.
 
 ## Component Building Principles
 

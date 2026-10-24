@@ -130,7 +130,7 @@ Need a curve that isn't here? Take it from [easing.dev](https://easing.dev/) or 
 { type: "spring", mass: 1, stiffness: 100, damping: 10 }  // traditional physics — more control
 ```
 
-Keep bounce at 0.1–0.3, and avoid bounce in most UI — reserve it for drag-to-dismiss and playful interactions.
+Keep bounce at 0.1–0.3, and avoid bounce in most UI — reserve it for drag-to-dismiss and playful interactions. In Motion, a `duration`/`bounce` spring starts from zero velocity, so when a gesture hands off momentum (a drag release, a flick, a reversal) use the physics form and pass the release `velocity`.
 
 ### 6. Interruption and exit
 

@@ -62,7 +62,7 @@ Hunt for: `scale(0)`, pure-fade entrances with no initial transform, `transform-
 CSS **transitions** retarget from the current state mid-animation; **keyframes** restart from zero. Anything triggered rapidly or reversible mid-motion (toasts stacking, toggles, drags, expand/collapse) must use transitions or springs.
 
 - Entry without JS: `@starting-style` (legacy fallback: a `data-mounted` attribute set in `useEffect`).
-- Gesture-driven motion should use springs — they carry velocity when interrupted.
+- Gesture-driven motion should use springs — they carry velocity when interrupted. In Motion, a `duration`/`bounce` spring starts from zero velocity, so when a gesture hands off momentum (a drag release, a flick, a reversal) use the physics form and pass the release `velocity`. A gesture handoff on a duration/bounce spring is a finding.
 - Spring configs, Apple-style (recommended): `{ type: "spring", duration: 0.5, bounce: 0.2 }`. Keep bounce subtle (0.1–0.3); reserve visible bounce for drag-to-dismiss and playful moments.
 - **Asymmetric timing**: deliberate phases (press, hold, destructive confirm) animate slower; the system's response snaps. Symmetric timing on press-and-release is a finding.
 
