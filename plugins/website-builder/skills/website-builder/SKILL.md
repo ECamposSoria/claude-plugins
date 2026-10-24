@@ -270,7 +270,7 @@ const x = useTransform(scrollYProgress, [0, 1], ["0%", "-66%"]);
 **Staggered scroll reveals** — sections rise into view in sequence:
 ```tsx
 const container = { hidden: {}, visible: { transition: { staggerChildren: 0.12 } } };
-const item = { hidden: { opacity: 0, y: 24 }, visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } } };
+const item = { hidden: { opacity: 0, y: 24 }, visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.23, 1, 0.32, 1] } } };
 
 <motion.ul variants={container} initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-80px" }}>
   {items.map((i) => <motion.li key={i.id} variants={item}>{i.label}</motion.li>)}
@@ -287,7 +287,7 @@ function RevealHeading({ text }) {
         <span key={i} className="inline-block overflow-hidden">
           <motion.span className="inline-block"
             initial={{ y: "100%" }} whileInView={{ y: 0 }} viewport={{ once: true }}
-            transition={{ delay: i * 0.05, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}>
+            transition={{ delay: i * 0.05, duration: 0.6, ease: [0.23, 1, 0.32, 1] }}>
             {w}&nbsp;
           </motion.span>
         </span>
@@ -313,7 +313,7 @@ function RevealHeading({ text }) {
 <AnimatePresence mode="wait">
   <motion.main key={route}
     initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}
-    transition={{ duration: 0.4, ease: "easeOut" }} />
+    transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }} />
 </AnimatePresence>
 ```
 
@@ -349,7 +349,8 @@ Two different jobs. Gate both behind explicit 3D intent.
 
 1. **Get a model.** Ask first whether the client has a CAD export or GLB. If not, generate one with the
    `nano-banana-multi:image-gen` skill: fal image-to-3D, where Hunyuan 3D Pro takes front, back and side photos
-   (~$0.38–0.68). Its `references/fal-endpoints.md` has the options and prices.
+   ($0.375, up to $0.825 with PBR, multi-view and custom face count). Its `references/fal-endpoints.md` has the
+   options and prices.
 2. **Check it against the photos.** Generators invent the hidden sides and smear printed labels. The client
    approves the model before it ships.
 3. **Optimise it.** `npx @gltf-transform/cli optimize in.glb out.glb --compress meshopt --texture-compress webp`
@@ -366,14 +367,19 @@ Either way: poster first (it is the LCP element), stop auto-rotation under `pref
 
 ### Animation Rules (non-negotiable)
 
+The snippets in this file are starting points. Where they and this plugin's motion skills disagree (curve,
+durations, transform shorthands, reduced motion, hover gating), the motion skills win: `animate` for building,
+`review-animations` for judging.
+
 | Rule | Value |
 |------|-------|
 | Micro-interaction duration | 150–300 ms |
 | Page / section entrance | 400–700 ms |
-| Signature easing | custom cubic-bezier `[0.22, 1, 0.36, 1]` (expo-out) or spring for interactions |
+| Signature easing | `cubic-bezier(0.23, 1, 0.32, 1)` (strong ease-out, the same curve the `animate` skill uses) or a spring for interactions; never the built-in `ease`/`easeOut` |
 | Animate only | `transform` / `opacity` — never `width`/`height`/`top`/`left` directly (jank) |
 | Scroll reveals | `viewport={{ once: true }}` — re-triggering on scroll-up is jarring |
-| Reduced-motion | Always honor `useReducedMotion()` — required |
+| Reduced-motion | Always honor `useReducedMotion()` — required. Gentler, not zero: keep opacity, drop movement |
+| Hover effects | Gate behind `@media (hover: hover) and (pointer: fine)` so touch screens don't get stuck hover states |
 | Target | 60fps; profile with Chrome DevTools MCP in Step 4 if anything stutters |
 
 **Reduced-motion guard (required):**
@@ -384,10 +390,10 @@ function AnimatedSection({ children }) {
   const reduce = useReducedMotion();
   return (
     <motion.div
-      initial={reduce ? false : { opacity: 0, y: 24 }}
+      initial={reduce ? { opacity: 0 } : { opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
-      transition={{ duration: reduce ? 0 : 0.6, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: reduce ? 0.2 : 0.6, ease: [0.23, 1, 0.32, 1] }}
     >
       {children}
     </motion.div>
@@ -462,7 +468,7 @@ pairing rather than a competitor to it. Fix what it flags, then re-run `critique
 | Skipping the inspiration pass | Pull 2–4 gallery references in Step 0 — anchors design AND motion before code |
 | Static page that "fades in" and stops | Add scroll-linked storytelling (parallax/pin/horizontal) — that's the astounding part |
 | No smooth scroll | Add Lenis — biggest perceived-quality jump for least effort |
-| Default linear easing everywhere | Use expo-out `[0.22, 1, 0.36, 1]` for reveals, springs for interactions |
+| Default linear easing everywhere | Use expo-out `[0.23, 1, 0.32, 1]` for reveals, springs for interactions |
 | Using 21st.dev as the component source | Use the free shadcn registries (Aceternity / Magic UI / React Bits); 21st is `logo_search` + human-in-loop variations only |
 | Writing Motion/GSAP/Tailwind from memory | Ground against the **local context7 cache first**, MCP on miss, then backfill — APIs churn |
 | Importing from `framer-motion` in a new project | Use `motion` package / `motion/react` import |

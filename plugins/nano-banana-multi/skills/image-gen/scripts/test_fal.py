@@ -8,6 +8,7 @@ import json
 import socket
 import sys
 import types
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -22,6 +23,7 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.delenv("FAL_APPROVE_USD", raising=False)
     monkeypatch.delenv("FAL_MONTHLY_CAP_USD", raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(fal, "_input_defaults", lambda endpoint: {})
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Network forbidden in tests")
@@ -32,11 +34,11 @@ def isolated(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("unit,args,rate,usd,lower", [
-    ("seconds", {"duration": 5}, .1, .5, False),
-    (" SECOND ", {"duration": "10"}, .1, 1, False),
-    ("seconds", {"duration": "5s"}, .1, .5, False),
-    ("seconds", {}, .1, None, False),
-    ("seconds", {"duration": "oops"}, .1, None, False),
+    ("seconds", {"duration": 5}, .1, .5, True),
+    (" SECOND ", {"duration": "10"}, .1, 1, True),
+    ("seconds", {"duration": "5s"}, .1, .5, True),
+    ("seconds", {}, .1, None, True),
+    ("seconds", {"duration": "oops"}, .1, None, True),
     ("seconds", {"duration": 5, "resolution": "1080p"}, .1, .5, True),
     ("seconds", {"duration": 5, "resolution": "4K"}, .1, .5, True),
     ("seconds", {"duration": 5, "resolution": "2160p"}, .1, .5, True),
@@ -57,6 +59,9 @@ def test_estimate(unit, args, rate, usd, lower):
     assert result.usd == (pytest.approx(usd) if usd is not None else None)
     assert result.lower_bound is lower
     if lower:
+        assert "resolution and audio" in result.note
+        assert "only a hint" in result.note
+    if args.get("resolution") in ("1080p", "4K", "2160p"):
         assert "720p" in result.note
     if unit == "seconds" and usd is None:
         assert "duration is unknown" in result.note.lower()
@@ -74,6 +79,8 @@ def test_estimate(unit, args, rate, usd, lower):
     (1, False, .5, True, None, None, False, False),
     (.2, True, None, True, None, None, False, False),
     (.2, True, .6, False, None, None, False, False),
+    (.2, False, .6, False, None, None, False, False),
+    (.2, False, .6, True, .5, 1, False, False),
     (.6, True, .2, False, None, None, False, False),
     (.6, True, .2, True, None, None, False, True),
     (.4, False, None, False, .8, 1, False, False),
@@ -192,8 +199,11 @@ def test_allowed_upload_submit_and_ledger(monkeypatch, tmp_path, capsys):
                                      "--arg", 'images[]="existing"', "--file", f"images[]={source}"])
     fal.main()
     assert calls == [("upload", str(source)), ("submit", "test", {"images": ["existing", "uploaded"]})]
-    ledger = json.loads((tmp_path / ".cache/nano-banana-multi/fal-ledger.jsonl").read_text())
-    assert ledger["request_id"] == "test-id"
+    ledger, submitted = [json.loads(line) for line in fal._ledger_path().read_text().splitlines()]
+    assert ledger["kind"] == "reservation"
+    assert submitted["kind"] == "submitted"
+    assert submitted["request_id"] == "test-id"
+    assert submitted["effective_usd"] == .1
     assert ledger["estimate_usd"] == .1
     assert ledger["endpoint"] == "test"
     assert ledger["approved"] is False
@@ -211,3 +221,152 @@ def test_monthly_cap_failure_blocks_dry_run(monkeypatch, tmp_path, capsys):
     output = json.loads(capsys.readouterr().out)
     assert "FAL_MONTHLY_CAP_USD" in output["guard"]["message"]
     assert output["guard"]["allowed"] is False
+
+
+@pytest.fixture
+def run_stub(monkeypatch, tmp_path):
+    calls = []
+
+    def submit(endpoint, arguments):
+        entries = [json.loads(line) for line in fal._ledger_path().read_text().splitlines()]
+        assert entries[-1]["kind"] == "reservation"
+        calls.append(arguments.copy())
+        return types.SimpleNamespace(request_id="stub-id", get=lambda: {})
+
+    monkeypatch.setitem(sys.modules, "fal_client", types.SimpleNamespace(submit=submit))
+    monkeypatch.setattr(fal, "_save_outputs", lambda *args: None)
+    monkeypatch.setattr(fal, "_prices", lambda endpoints: [dict(endpoint_id="test", unit="images", unit_price=.4)])
+    monkeypatch.setattr(sys, "argv", ["fal.py", "run", "test", "--out", str(tmp_path)])
+    return calls
+
+
+@pytest.mark.parametrize("flags", [[], ["--max-usd", "0.504"]])
+def test_seconds_require_ceiling_and_audio_approval(monkeypatch, run_stub, flags):
+    monkeypatch.setattr(fal, "_prices", lambda endpoints: [dict(endpoint_id="test", unit="seconds", unit_price=.14)])
+    monkeypatch.setattr(sys, "argv", sys.argv + ["--arg", "duration=3"] + flags)
+    with pytest.raises(SystemExit) as exc:
+        fal.main()
+    assert exc.value.code == 3
+    assert run_stub == []
+    assert not fal._ledger_path().exists()
+
+
+def test_defaults_are_only_used_for_estimate(monkeypatch, run_stub, capsys):
+    monkeypatch.setattr(fal, "_input_defaults", lambda endpoint: {"resolution": "1080p", "duration": "5", "prompt": "default"})
+    monkeypatch.setattr(fal, "_prices", lambda endpoints: [dict(endpoint_id="test", unit="seconds", unit_price=.1)])
+    argv = sys.argv + ["--max-usd", "0.5", "--arg", "prompt=explicit"]
+    monkeypatch.setattr(sys, "argv", argv + ["--dry-run"])
+    fal.main()
+    output = json.loads(capsys.readouterr().out)
+    assert output["defaults_used"] == {"resolution": "1080p", "duration": "5"}
+    assert output["estimate"]["usd"] == .5
+    assert output["estimate"]["lower_bound"] is True
+    assert "720p" in output["estimate"]["note"]
+    assert output["arguments"] == {"prompt": "explicit"}
+    assert not fal._ledger_path().exists()
+    monkeypatch.setattr(sys, "argv", argv)
+    fal.main()
+    assert run_stub == [{"prompt": "explicit"}]
+
+
+def test_cap_counts_recent_reservation(monkeypatch, run_stub):
+    monkeypatch.setenv("FAL_MONTHLY_CAP_USD", "1")
+    monkeypatch.setattr(fal, "month_to_date_spend", lambda: .4)
+    fal.main()
+    with pytest.raises(SystemExit) as exc:
+        fal.main()
+    assert exc.value.code == 3
+    assert len(run_stub) == 1
+    entries = [json.loads(line) for line in fal._ledger_path().read_text().splitlines()]
+    assert [entry["kind"] for entry in entries] == ["reservation", "submitted"]
+    assert entries[0]["effective_usd"] == .4
+    assert entries[0]["pid"] == fal.os.getpid()
+
+
+def test_cap_ignores_old_reservations(monkeypatch, run_stub):
+    monkeypatch.setenv("FAL_MONTHLY_CAP_USD", "1")
+    monkeypatch.setattr(fal, "month_to_date_spend", lambda: .4)
+    path = fal._ledger_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(dict(kind="reservation", effective_usd=10,
+                                   ts=(datetime.now(timezone.utc) - timedelta(minutes=61)).isoformat())) + "\n")
+    fal.main()
+    assert len(run_stub) == 1
+
+
+def test_capped_dry_run_never_locks_or_writes(monkeypatch, run_stub):
+    monkeypatch.setenv("FAL_MONTHLY_CAP_USD", "1")
+    monkeypatch.setattr(fal, "month_to_date_spend", lambda: .4)
+    monkeypatch.setattr(sys, "argv", sys.argv + ["--dry-run"])
+
+    def forbidden(*args):
+        raise AssertionError("dry-run must not lock")
+
+    monkeypatch.setattr(fal.fcntl, "flock", forbidden)
+    fal.main()
+    assert not fal._ledger_path().parent.exists()
+    assert run_stub == []
+
+
+def test_cap_reservation_write_failure_refuses(monkeypatch, run_stub):
+    monkeypatch.setenv("FAL_MONTHLY_CAP_USD", "1")
+    monkeypatch.setattr(fal, "month_to_date_spend", lambda: .4)
+
+    def broken(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(fal, "_ledger", broken)
+    with pytest.raises(SystemExit) as exc:
+        fal.main()
+    assert exc.value.code == 3
+    assert run_stub == []
+
+
+@pytest.mark.parametrize("stage", ["upload", "submit"])
+def test_failed_run_retains_reservation(monkeypatch, run_stub, tmp_path, stage):
+    def broken(*args, **kwargs):
+        raise RuntimeError("stub failure")
+
+    client = sys.modules["fal_client"]
+    if stage == "upload":
+        source = tmp_path / "input.png"
+        source.write_bytes(b"fake")
+        monkeypatch.setattr(sys, "argv", sys.argv + ["--file", f"image={source}"])
+        client.upload_file = broken
+    else:
+        client.submit = broken
+    with pytest.raises(SystemExit) as exc:
+        fal.main()
+    assert exc.value.code == 1
+    entries = [json.loads(line) for line in fal._ledger_path().read_text().splitlines()]
+    assert [entry["kind"] for entry in entries] == ["reservation", "failed"]
+    assert entries[1]["effective_usd"] == .4
+
+
+def test_cap_holds_lock_through_check_and_reservation(monkeypatch, run_stub):
+    monkeypatch.setenv("FAL_MONTHLY_CAP_USD", "1")
+    original_ledger = fal._ledger
+    checked = []
+
+    def assert_locked(stage):
+        with fal._ledger_path().with_suffix(".lock").open("a") as contender:
+            with pytest.raises(BlockingIOError):
+                fal.fcntl.flock(contender, fal.fcntl.LOCK_EX | fal.fcntl.LOCK_NB)
+        checked.append(stage)
+
+    def usage():
+        assert_locked("usage")
+        return .4
+
+    def ledger(args, kind, effective, **fields):
+        if kind == "reservation":
+            assert_locked("reservation")
+        original_ledger(args, kind, effective, **fields)
+
+    monkeypatch.setattr(fal, "month_to_date_spend", usage)
+    monkeypatch.setattr(fal, "_ledger", ledger)
+    fal.main()
+    assert checked == ["usage", "reservation"]
+    with fal._ledger_path().with_suffix(".lock").open("a") as contender:
+        fal.fcntl.flock(contender, fal.fcntl.LOCK_EX | fal.fcntl.LOCK_NB)
+    assert len(run_stub) == 1

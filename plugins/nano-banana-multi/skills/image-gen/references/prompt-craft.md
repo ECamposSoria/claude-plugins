@@ -54,7 +54,8 @@ Then compare the result with the photo: colour, label, shape, logo. If anything 
 - 🔴 **Printed text is always hallucinated.** Packaging, badges, banners, shirts, screens: models misspell the
   client's name and invent other brands. Audit every surface with text by cropping 1:1 from the final
   render, not from a zoomed PNG.
-- 🔴 **Never redraw a logo.** Use the real file (`company/brand-assets/` and each brand's `marketing/` folder).
+- 🔴 **Never redraw a logo.** Use the real file: `/mnt/hgfs/vm-share/projects memory/company/brand-assets/`, or the
+  brand's folder under `~/projects/uniteapp/marketing/`.
   A redrawn "close enough" logo was caught immediately.
 - 🔴 **Text on clothing never survives motion**, and pasting a print onto moving cloth reads as fake. Keep
   shirts plain in the start frame, or accept the garment as generated.

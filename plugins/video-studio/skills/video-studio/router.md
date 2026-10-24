@@ -15,7 +15,7 @@ A clip the user already has (talking head, screen recording, phone video, demo c
 Real-looking people, places or products in motion that nobody filmed: workers assembling a stand, a product
 in use, a rooftop at dusk, a reel built from AI keyframes.
 
-- Yes → **ai-footage**. Generation runs through the `image-gen` skill; repair, assembly and delivery happen
+- Yes → **ai-footage**. Generation runs through the `nano-banana-multi:image-gen` skill; repair, assembly and delivery happen
   here. If it also needs animated overlays, finish the clips first, then treat it as **hybrid**.
 - Only still photos to animate into a story or slideshow → Gate 4 (that is animation, not AI footage).
 - No → Gate 3.

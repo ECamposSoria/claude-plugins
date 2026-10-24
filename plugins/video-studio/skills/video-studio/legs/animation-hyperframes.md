@@ -47,7 +47,7 @@ project README so a re-render months later produces the same frames. Last versio
 ## Brand and layout
 
 - Real logo file only. Mac Group's isotype needs ~300 px for the inner text to read; at small sizes pair it
-  with the wordmark. Palette and type per brand: `memory/marketing/<brand>/design.md`.
+  with the wordmark. Palette and type per brand: `~/projects/uniteapp/memory/marketing/<brand>/design.md`.
 - WhatsApp event photos (1200×1600) cut subjects when cropped full-bleed to 9:16: put them in a 3:4 card on a
   brand-colour field instead.
 - Stories safe zone: critical content between y=248 and y=1690.

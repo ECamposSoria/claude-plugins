@@ -25,11 +25,11 @@ as `--max-usd`.
 
 | Endpoint | Price | Use it for |
 |---|---|---|
-| `fal-ai/kling-video/v3/pro/image-to-video` | **$0.112/s** audio off, $0.168/s audio on | **Default realistic clip.** People and physics; start + end frame. |
-| `kling/v4/image-to-video` | $0.157/s 720p, **$0.235/s 1080p** | Only for 30 s clips, per-shot `multi_prompt`, native audio |
+| `fal-ai/kling-video/v3/pro/image-to-video` | **$0.112/s** audio off, $0.168/s audio on | **Default realistic clip.** People and physics; start + end frame. 🔴 `generate_audio` defaults to `true`: pass `false` unless you use its sound. |
+| `kling/v4/image-to-video` | $0.157/s 720p, **$0.235/s 1080p** | Only for 30 s clips, per-shot `multi_prompt`, native audio. 🔴 `resolution` defaults to `1080p`. |
 | `bytedance/seedance-2.5/us/image-to-video` | $0.0214 per 1K tokens, tokens = w×h×s×24/1024 (≈$1.04/s at 1080p) | End frame plus synced audio, up to 30 s. ~2× BytePlus's own price. |
 | `google/gemini-omni-flash/v1.1/image-to-video` | $0.03/s | Cheapest end-frame option; motion drafts |
-| `fal-ai/film` | $0.0013/s | Frame interpolation to repair a one-frame pop (max 8 frames per call) |
+| `fal-ai/film` | $0.0013/s | Frame interpolation to repair a pop: `start_image_url`, `end_image_url`, `num_frames` (≤ 8). Pass `--max-usd 0.01`. |
 | `fal-ai/sam-3/video` | $0.005 per 16 frames | Per-frame masks of people/objects for compositing repairs |
 
 When both the first and the last frame matter, pass both: on per-second pricing an end frame costs nothing.

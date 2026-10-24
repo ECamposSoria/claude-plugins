@@ -34,6 +34,7 @@ Auth: FAL_KEY env var, else FAL_KEY=... read from ~/.secrets/fal.env.
 """
 
 import argparse
+import fcntl
 import json
 import math
 from dataclasses import asdict, dataclass
@@ -85,10 +86,11 @@ def _number(value) -> float:
 def estimate_cost(price: dict, arguments: dict) -> Estimate:
     """Estimate documented units without guessing model-specific pricing."""
     unit = str(price.get("unit", "unknown")).strip().lower()
-    lower = unit in ("second", "seconds") and any(
-        x in str(arguments.get("resolution", "")).lower() for x in ("1080", "4k", "2160")
-    )
-    note = "Pricing uses the 720p rate; higher resolution costs more." if lower else ""
+    lower = unit in ("second", "seconds")
+    note = ("Per-second video prices vary with resolution and audio; the pricing API rate "
+            "is only a hint; read the model page.") if lower else ""
+    if lower and any(x in str(arguments.get("resolution", "")).lower() for x in ("1080", "4k", "2160")):
+        note += " Pricing uses the 720p rate; higher resolution costs more."
     try:
         rate = _number(price["unit_price"])
         if price.get("currency", "USD") != "USD":
@@ -129,13 +131,9 @@ def guard(est: Estimate, max_usd: float | None, approved: bool, threshold: float
     if (est.usd is None or est.lower_bound) and max_usd is None:
         return False, ("Read the price on https://fal.ai/models/<endpoint> and rerun with "
                        "--max-usd <estimate>.")
-    effective = est.usd
-    if effective is None:
-        effective = max_usd
-    elif est.lower_bound:
-        effective = max(effective, max_usd)
-    elif max_usd is not None and effective > max_usd:
-        return False, f"Estimated ${effective:.4f} exceeds the stated ceiling --max-usd ${max_usd:.4f}."
+    if est.usd is not None and not est.lower_bound and max_usd is not None and est.usd > max_usd:
+        return False, f"Estimated ${est.usd:.4f} exceeds the stated ceiling --max-usd ${max_usd:.4f}."
+    effective = _effective_usd(est, max_usd)
     if effective > threshold and not approved:
         return False, (f"Estimated ${effective:.4f} is above the ${threshold:.4f} approval threshold "
                        "(FAL_APPROVE_USD). Ask the user to approve this spend, then rerun with --approved.")
@@ -191,17 +189,94 @@ def cmd_spend(args) -> None:
     print(f"TOTAL ${sum(cost for _, cost in grouped.values()):.4f}")
 
 
-def _ledger(args, request_id: str, est: Estimate) -> None:
+def _effective_usd(est: Estimate, max_usd: float | None) -> float | None:
+    if est.usd is None:
+        return max_usd
+    return max(est.usd, max_usd) if max_usd is not None else est.usd
+
+
+def _ledger_path() -> Path:
+    return Path.home() / ".cache/nano-banana-multi/fal-ledger.jsonl"
+
+
+def _ledger(args, kind: str, effective: float, **fields) -> None:
+    path = _ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = dict(kind=kind, ts=datetime.now(timezone.utc).isoformat(), endpoint=args.endpoint,
+                 effective_usd=effective, **fields)
+    with path.open("a") as stream:
+        stream.write(json.dumps(entry) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _ledger_warn(args, kind: str, effective: float, **fields) -> None:
     try:
-        path = Path.home() / ".cache/nano-banana-multi/fal-ledger.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        entry = dict(ts=datetime.now(timezone.utc).isoformat(), endpoint=args.endpoint,
-                     request_id=request_id, estimate_usd=est.usd, lower_bound=est.lower_bound,
-                     max_usd=args.max_usd, approved=args.approved)
-        with path.open("a") as stream:
-            stream.write(json.dumps(entry) + "\n")
+        _ledger(args, kind, effective, **fields)
     except Exception as exc:
         print(f"Warning: could not append fal ledger: {exc}", file=sys.stderr)
+
+
+def _recent_reservations() -> float:
+    path = _ledger_path()
+    if not path.exists():
+        return 0.0
+    now = datetime.now(timezone.utc)
+    total = 0.0
+    for line in path.read_text().splitlines():
+        entry = json.loads(line)
+        if entry.get("kind") == "reservation":
+            age = (now - datetime.fromisoformat(entry["ts"])).total_seconds()
+            if age <= 3600:
+                total += _number(entry["effective_usd"])
+    return total
+
+
+def _check_and_reserve(args, est: Estimate, threshold: float, cap: float | None) -> tuple[bool, str]:
+    def check():
+        spend = month_to_date_spend() if cap is not None else None
+        if spend is not None:
+            spend += _recent_reservations()
+        return guard(est, args.max_usd, args.approved, threshold, spend, cap, args.over_cap)
+
+    def reserve():
+        _ledger(args, "reservation", _effective_usd(est, args.max_usd),
+                estimate_usd=est.usd, lower_bound=est.lower_bound, max_usd=args.max_usd,
+                approved=args.approved, pid=os.getpid())
+
+    if cap is not None and not args.dry_run:
+        try:
+            path = _ledger_path().with_suffix(".lock")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                allowed, message = check()
+                if allowed:
+                    reserve()
+                return allowed, message
+        except Exception as exc:
+            return False, f"Cannot enforce FAL_MONTHLY_CAP_USD: reservation failed: {exc}"
+    try:
+        allowed, message = check()
+    except Exception as exc:
+        return False, f"Cannot enforce FAL_MONTHLY_CAP_USD: ledger lookup failed: {exc}"
+    if allowed and not args.dry_run:
+        try:
+            reserve()
+        except Exception as exc:
+            print(f"Warning: could not append fal ledger: {exc}", file=sys.stderr)
+    return allowed, message
+
+
+def _input_defaults(endpoint: str) -> dict:
+    try:
+        data = _platform_get("/models", [("endpoint_id", endpoint), ("expand", "openapi-3.0")])
+        schemas = (data["models"][0].get("openapi") or {}).get("components", {}).get("schemas", {})
+        return {prop: spec["default"] for name, schema in schemas.items() if name.endswith("Input")
+                for prop, spec in schema.get("properties", {}).items() if "default" in spec}
+    except Exception as exc:
+        print(f"Warning: input defaults lookup failed: {exc}", file=sys.stderr)
+        return {}
 
 
 def _platform_get(path: str, params: list[tuple[str, str]]) -> dict:
@@ -337,7 +412,8 @@ def _run(args) -> None:
 
     prices = _prices([args.endpoint])
     price = next((p for p in prices if p.get("endpoint_id") == args.endpoint), {})
-    est = estimate_cost(price, preview)
+    defaults_used = {key: value for key, value in _input_defaults(args.endpoint).items() if key not in preview}
+    est = estimate_cost(price, {**defaults_used, **preview})
     amount = "unknown" if est.usd is None else f"${est.usd:.4f}"
     print(f"Price: {price.get('unit_price', 'unknown')} {price.get('currency', 'USD')} per "
           f"{price.get('unit', 'unknown')}; estimate {amount}"
@@ -345,12 +421,11 @@ def _run(args) -> None:
     threshold = _number(_config("FAL_APPROVE_USD", "0.50"))
     cap_value = _config("FAL_MONTHLY_CAP_USD")
     cap = _number(cap_value) if cap_value is not None else None
-    spend = month_to_date_spend() if cap is not None else None
-    allowed, message = guard(est, args.max_usd, args.approved, threshold, spend, cap, args.over_cap)
+    allowed, message = _check_and_reserve(args, est, threshold, cap)
     message = message.replace("https://fal.ai/models/<endpoint>", f"https://fal.ai/models/{args.endpoint}")
     print(message, file=sys.stderr)
     if args.dry_run:
-        print(json.dumps(dict(arguments=preview, estimate=asdict(est),
+        print(json.dumps(dict(arguments=preview, defaults_used=defaults_used, estimate=asdict(est),
                               guard=dict(allowed=allowed, message=message)), indent=2))
     if not allowed:
         sys.exit(3)
@@ -359,13 +434,18 @@ def _run(args) -> None:
 
     import fal_client
 
-    _load_key()
-    for key, path in files:
-        _set_input(arguments, key, fal_client.upload_file(path))
-    handle = fal_client.submit(args.endpoint, arguments=arguments)
+    effective = _effective_usd(est, args.max_usd)
+    try:
+        _load_key()
+        for key, path in files:
+            _set_input(arguments, key, fal_client.upload_file(path))
+        handle = fal_client.submit(args.endpoint, arguments=arguments)
+    except Exception as exc:
+        _ledger_warn(args, "failed", effective, error=str(exc), pid=os.getpid())
+        raise
     # Printed before waiting so a killed process can still recover the result.
     print(f"request_id: {handle.request_id}", file=sys.stderr, flush=True)
-    _ledger(args, handle.request_id, est)
+    _ledger_warn(args, "submitted", effective, request_id=handle.request_id)
     _save_outputs(handle.get(), args.out, handle.request_id)
 
 

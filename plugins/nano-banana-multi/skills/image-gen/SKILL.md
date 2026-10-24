@@ -18,7 +18,7 @@ Two scripts, both run with `uv run`:
 
 | After generating you need to… | Go to |
 |---|---|
-| Cut, assemble, caption, add voiceover/music, check a clip for pops, deliver a video | `video-studio:video` |
+| Cut, assemble, caption, add voiceover/music, check a clip for pops, deliver a video | `video-studio:video-studio` (`/video`) |
 | Put an image or a 3D model on a web page | `website-builder:website-builder` |
 
 ## Prerequisites (each only for its backend)
@@ -38,7 +38,7 @@ Two scripts, both run with `uv run`:
 | Fast or batch images from text | `image.py --model flash`, or `pro` for 2K/4K | Gemini API |
 | An edit that must keep everything else intact, or both CLIs failed | fal `openai/gpt-image-2.5/flare/edit` | $0.039 |
 | A realistic video clip | fal `fal-ai/kling-video/v3/pro/image-to-video` | $0.112/s |
-| A 3D model of a real product | fal `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` | $0.375–0.675 |
+| A 3D model of a real product | fal `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` | $0.375, up to $0.825 with add-ons |
 | Removing an object from a photo | fal `fal-ai/finegrain-eraser/mask` | $0.045 |
 | A fal model refused a legitimate brief | Venice, see `references/fal-endpoints.md` | credits |
 
@@ -106,11 +106,13 @@ else a directory; the raw result is saved beside it as `fal-<request_id>.json`. 
 | Guard says | Do |
 |---|---|
 | cannot estimate (per-token, per-"unit", 3D, OpenAI placeholder) | Read the model page, rerun with `--max-usd <your estimate>` |
-| estimate is a lower bound (1080p video) | Same: pass `--max-usd` with the 1080p price from the page |
+| any video (per-second price) | Always pass `--max-usd` with the price from the model page: resolution and audio change it, and their schema defaults can be the expensive option |
 | above the approval threshold (`FAL_APPROVE_USD`, default $0.50) | **Ask the user**, quoting the estimate. Rerun with `--approved` only after they say yes. |
 | over the monthly cap (`FAL_MONTHLY_CAP_USD`, unset = no cap) | Report month-to-date spend; `--over-cap` only if the user raises or waives the cap |
 
-Never pass `--approved` or `--over-cap` on your own judgement. `--dry-run` shows the arguments, the estimate
+The endpoint's schema defaults are merged in before estimating (an omitted `duration` uses its default), and
+the higher of the estimate and `--max-usd` is what gets approved. Never pass `--approved` or `--over-cap` on
+your own judgement. `--dry-run` shows the arguments, the estimate
 and the decision without uploading or submitting. `fal.py spend [--since YYYY-MM-DD]` prints real spend
 per endpoint from fal's usage API (default: this month). Each submitted run is logged to
 `~/.cache/nano-banana-multi/fal-ledger.jsonl`.
@@ -120,6 +122,8 @@ per endpoint from fal's usage API (default: this month). Each submitted run is l
 - One clip carries **one** camera move and **one** action. Big state changes (an inflatable going from flat to
   full, people entering and leaving) make Kling pop for a single frame; use shorter shots or a start frame only.
 - Pass a start **and** an end frame when both matter; it costs nothing extra per second.
+- Kling 3.0 Pro generates audio unless told not to ($0.168/s instead of $0.112/s): `--arg generate_audio=false`
+  when the sound will be replaced. Kling 4.0's `resolution` defaults to `1080p`.
 - Kling rewrites background lettering and clothing text in motion. Plan for it in the frame, not in post.
 - Draft at 720p, finals at 1080p, at most three takes per shot.
 - **Every generated clip goes through `video-studio`'s `qa_render.py --mode clip` before it is used.** One-frame

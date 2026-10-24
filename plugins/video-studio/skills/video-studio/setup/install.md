@@ -11,7 +11,7 @@ State of this VM, verified 2026-10-24. Check before reinstalling anything.
 | Hyperframes | via `npx`; its own `chrome-headless-shell` in `~/.cache/hyperframes/chrome/` | `npx hyperframes doctor` |
 | `unzip` | installed (without it Hyperframes falls back to snap Chromium and hangs) | `which unzip` |
 | ElevenLabs key | `~/.secrets/elevenlabs.env` as `ELEVENLABS_API_KEY` | never print it |
-| fal key | `~/.secrets/fal.env`, used through the `image-gen` skill | never print it |
+| fal key | `~/.secrets/fal.env`, used through the `nano-banana-multi:image-gen` skill | never print it |
 
 ## Rebuilding the transcription venv (a fresh VM only)
 

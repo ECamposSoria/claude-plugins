@@ -10,7 +10,7 @@ instructions plus three small scripts, not an engine.
 | animation-remotion | the `promo-video` skill | Per-frame React motion, reused React components, the guided promo |
 | animation-hyperframes | the `hyperframes:*` skills, `npx hyperframes` | Pasted web content, GSAP/Lottie/Three.js timelines, stories from photos, captions-first social cuts |
 | footage-edit | `faster-whisper` (venv) + `ffmpeg` | A real recording to cut, trim or tighten |
-| ai-footage | clips from the `image-gen` skill (fal), repaired and assembled here | Footage nobody filmed; repairing pops, rewritten lettering, invented clothing marks |
+| ai-footage | clips from the `nano-banana-multi:image-gen` skill (fal), repaired and assembled here | Footage nobody filmed; repairing pops, rewritten lettering, invented clothing marks |
 | audio (shared) | ElevenLabs, Hyperframes `media-use`, ffmpeg `loudnorm` | Voiceover, music, captions, −14 LUFS |
 
 **Hybrid** = a base (footage or AI clips) + animation overlays, joined with `scripts/composite.sh`.
@@ -29,7 +29,8 @@ Routing: `skills/video-studio/router.md`. Playbooks: `skills/video-studio/legs/`
 ## Policies
 
 - **Non-blocking.** Long renders, transcriptions and generations run in the background or go to the user.
-- **Processing is local.** Paid calls are fal (through `image-gen`'s spend guard) and ElevenLabs, quoted first.
+- **Processing is local.** Generation and voice may call paid or cloud services (fal and Gemini through
+  `nano-banana-multi:image-gen`, ElevenLabs, HeyGen's free path), always quoted first.
 - **QA before delivery.** Every render passes `qa_render.py`; finals go to `/mnt/hgfs/vm-share/videos/<project>/`.
 
 ## Considered and not adopted (2026-10-24)

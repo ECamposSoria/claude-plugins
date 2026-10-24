@@ -148,7 +148,7 @@ def parse_ebur128(stderr: str) -> tuple[float | None, float | None]:
 
 
 def jump_indices(diffs: list[float]) -> list[int]:
-    """Return 1-based later-frame indices for unusually large changes."""
+    """Return the 0-based index of the frame after each jump (ffmpeg's n)."""
     if not diffs:
         return []
     median = float(np.median(diffs))
@@ -173,6 +173,19 @@ def _run(command: list[str], timeout: float = 45) -> subprocess.CompletedProcess
     return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
 
 
+def expected_frame_count(video: dict[str, Any], duration: float, fps: float) -> float:
+    """Frames the video stream should decode to: its own header count, else its own duration × average rate.
+
+    The container duration can be longer than the picture (a music bed) and r_frame_rate overstates
+    variable-rate phone footage, so neither is used when the stream says better.
+    """
+    frames = _number(video.get("nb_frames"))
+    if frames:
+        return frames
+    seconds = _number(video.get("duration")) or duration
+    return seconds * (parse_rate(video.get("avg_frame_rate")) or fps)
+
+
 def pass_timeout(duration: float | None) -> float:
     """Each pass decodes the whole file on one thread, so the limit grows with its length."""
     return max(60.0, 4.0 * (duration or 0.0))
@@ -189,8 +202,8 @@ def _ffmpeg_filter(video: str, filter_name: str, filter_expr: str, timeout: floa
     return proc.stderr
 
 
-def _jump_indices(video: str, timeout: float = 60.0) -> list[int]:
-    command = ["ffmpeg", "-nostdin", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "error", "-i", video, "-vf", "scale=320:180,format=gray", "-an", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+def _jump_indices(video: str, timeout: float = 60.0) -> tuple[list[int], int]:
+    command = ["ffmpeg", "-nostdin", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "error", "-i", video, "-vf", "scale=320:180,format=gray", "-an", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
     frame_size = 320 * 180
     error_file = tempfile.TemporaryFile()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error_file, bufsize=0)
@@ -237,7 +250,7 @@ def _jump_indices(video: str, timeout: float = 60.0) -> list[int]:
             process.wait()
         process.stdout.close()
         error_file.close()
-    return jump_indices(diffs)
+    return jump_indices(diffs), len(diffs) + int(previous is not None)
 
 
 def _make_sheet(video: str, destination: str, duration: float, frames: int) -> list[float]:
@@ -312,6 +325,17 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             findings.append(Finding("INFO", "audio", "audio checks skipped; no audio stream"))
 
         limit = pass_timeout(duration)
+        try:
+            # video and audio only: phone files carry data tracks that ffmpeg cannot "decode"
+            decoded = _run(["ffmpeg", "-v", "error", "-i", args.video, "-map", "0:v", "-map", "0:a?", "-f", "null", "-"], timeout=limit)
+            if decoded.returncode or decoded.stderr:
+                detail = "\n".join(decoded.stderr.splitlines()[:3]) or f"ffmpeg exited {decoded.returncode}"
+                findings.append(Finding("FAIL", "decode", detail))
+            else:
+                findings.append(Finding("PASS", "decode", "all streams decoded without errors"))
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            findings.append(Finding("FAIL", "decode", str(exc)))
+
         black = parse_blackdetect(_ffmpeg_filter(args.video, "blackdetect", "blackdetect=d=0.1:pix_th=0.10", limit))
         findings.extend(_finding_for_intervals("black", black, duration or 0))
         if not black:
@@ -344,7 +368,10 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             else:
                 findings.append(Finding("WARN", "peak", "could not parse true peak"))
 
-        jumps = _jump_indices(args.video, limit)
+        jumps, frame_count = _jump_indices(args.video, limit)
+        expected_frames = expected_frame_count(video, duration, actual_fps)
+        if frame_count < 0.98 * expected_frames:
+            findings.append(Finding("FAIL", "frames", f"decoded {frame_count} of ~{expected_frames:g} expected frames"))
         for frame_index in jumps:
             timestamp = frame_index / (actual_fps or args.expect_fps or 1)
             level = "WARN" if args.mode == "clip" else "INFO"

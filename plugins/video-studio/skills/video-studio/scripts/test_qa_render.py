@@ -60,6 +60,17 @@ def test_jump_detection_uses_absolute_differences():
     assert qa.jump_indices([0, 255, 0, 0]) == [2]
 
 
+def test_expected_frames_prefer_the_video_stream_over_the_container():
+    # the stream's own frame count wins
+    assert qa.expected_frame_count({"nb_frames": "289"}, 99.0, 24) == 289
+    # a music bed longer than the picture must not inflate the expectation
+    assert qa.expected_frame_count({"duration": "12.0", "avg_frame_rate": "24/1"}, 15.0, 24) == pytest.approx(288)
+    # variable-rate phone footage: the average rate, not r_frame_rate
+    assert qa.expected_frame_count({"duration": "10.0", "avg_frame_rate": "2950/100"}, 10.0, 30) == pytest.approx(295)
+    # nothing in the stream: container duration × nominal rate
+    assert qa.expected_frame_count({}, 2.0, 24) == pytest.approx(48)
+
+
 def test_pass_timeout_grows_with_duration():
     assert qa.pass_timeout(None) == 60
     assert qa.pass_timeout(10) == 60
@@ -74,7 +85,7 @@ def make_video(path: Path, video_filter: str, duration: float, audio: bool | str
     command += ["-t", str(duration), "-c:v", "libx264", "-pix_fmt", "yuv420p"]
     if audio:
         command += ["-c:a", "aac", "-shortest"]
-    command += [str(path)]
+    command += ["-movflags", "+faststart", str(path)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
 
@@ -168,3 +179,26 @@ def test_nearly_all_silent_audio_fails_and_keeps_interval_warning(tmp_path):
     data = result_json(run_cli(video, "--expect-audio"))
     assert any(f["check"] == "silence" and f["level"] == "FAIL" for f in data["findings"])
     assert any(f["check"] == "silence" and f["level"] == "WARN" for f in data["findings"])
+
+
+def test_truncated_faststart_clip_fails(tmp_path):
+    video = tmp_path / "complete.mp4"
+    truncated = tmp_path / "truncated.mp4"
+    make_video(video, "testsrc2=s=320x240:r=24:d=3", 3)
+    contents = video.read_bytes()
+    truncated.write_bytes(contents[:int(len(contents) * .65)])
+    proc = run_cli(truncated, expect_duration="3")
+    assert proc.returncode == 1
+    assert any(f["level"] == "FAIL" and f["check"] in {"decode", "frames"}
+               for f in result_json(proc)["findings"])
+
+
+def test_frame_shortfall_fails_without_decode_errors(monkeypatch, tmp_path, capsys):
+    video = tmp_path / "normal.mp4"
+    make_video(video, "color=c=green:s=320x240:r=24:d=2", 2, audio=False)
+    monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 46))
+    assert qa.main([str(video), "--json"]) == 1
+    findings = json.loads(capsys.readouterr().out)["findings"]
+    assert any(f["check"] == "decode" and f["level"] == "PASS" for f in findings)
+    assert any(f["check"] == "frames" and f["level"] == "FAIL" and
+               f["message"] == "decoded 46 of ~48 expected frames" for f in findings)

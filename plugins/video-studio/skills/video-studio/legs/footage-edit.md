@@ -60,7 +60,7 @@ python3 "$SKILL/scripts/cut_from_transcript.py" --edl edl.json --output basecut.
 ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 basecut.mp4
 ```
 
-Kept duration should equal the sum of your keep-spans (±0.2s). Spot-check the audio doesn't clip mid-word. Then deliver for review (copy to `/mnt/hgfs/vm-share/` or serve on `192.168.171.128`).
+Kept duration should equal the sum of your keep-spans (±0.2s). Spot-check the audio doesn't clip mid-word. Then QA and deliver per SKILL.md Step 3 (`/mnt/hgfs/vm-share/videos/<project>/`).
 
 ## Notes
 
