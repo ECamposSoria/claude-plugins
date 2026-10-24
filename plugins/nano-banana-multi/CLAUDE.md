@@ -2,33 +2,30 @@
 
 ## Overview
 
-Local fork of `nano-banana-pro` that adds OpenAI `gpt-image-2` as a third image-generation backend alongside Google Gemini Flash and Pro. Single CLI surface, provider selected via `--model`.
+Generation plugin (started as a fork of `nano-banana-pro`). One skill, `image-gen`, with two scripts:
 
-## Running the script
+- `skills/image-gen/scripts/image.py`: images via `--model flash | pro | codex | agy` (Gemini API, gpt-image-2
+  through the Codex CLI login, the Antigravity CLI image subagent). `gpt` is a deprecated alias of `codex`.
+- `skills/image-gen/scripts/fal.py`: any fal.ai endpoint (`search`, `schema`, `price`, `run`, `result`,
+  `upload`, `spend`). `run` passes a spend guard first: exit code 3 means refused; `--dry-run`, `--max-usd`,
+  `--approved` and `--over-cap` control it, `FAL_APPROVE_USD` (default 0.50) and `FAL_MONTHLY_CAP_USD`
+  configure it.
 
-```bash
-uv run skills/image-gen/scripts/image.py \
-  --prompt "Your image description" \
-  --output "/path/to/output.png"
-```
-
-Options:
-- `--prompt` (required): Image description
-- `--output` (required): Output PNG path
-- `--aspect` (optional): `square` (default) | `landscape` | `portrait`
-- `--reference` (optional, repeatable): Path to a reference image
-- `--model` (optional): `flash` (default) | `pro` | `gpt`
-- `--size` (optional): `1K` (default) | `2K` | `4K` (applies to `pro` and `gpt`)
-- `--quality` (optional): `auto` (default) | `low` | `medium` | `high` (applies to `gpt` only)
-
-## fal.ai runner
-
-`skills/image-gen/scripts/fal.py` drives any fal.ai endpoint (image or video): `search`, `schema`,
-`price`, `run`, `result`. Usage and the endpoint shortlist live in `skills/image-gen/SKILL.md`.
-Needs `FAL_KEY` (env, or `~/.secrets/fal.env`).
+Usage, routing and traps live in `skills/image-gen/SKILL.md`; endpoint prices in
+`skills/image-gen/references/fal-endpoints.md`; prompt structure in `references/prompt-craft.md`.
 
 ## Prerequisites
 
-- `GEMINI_API_KEY` env var: required for `--model flash` and `--model pro`
-- `OPENAI_API_KEY` env var: required for `--model gpt`
+- `GEMINI_API_KEY` for `flash` / `pro`; a signed-in Codex CLI for `codex`; a signed-in `agy` for `agy`.
+- `FAL_KEY` in the environment or `~/.secrets/fal.env`.
 - Python 3.10+ with `uv`. Dependencies are inline (PEP 723).
+
+## Tests
+
+`scripts/test_image.py` and `scripts/test_fal.py` (pytest, fully offline; `test_fal.py` blocks the network and
+never reads the real key). Run them in a container:
+
+```bash
+docker run --rm -v "$PWD":/repo:ro -w /repo/skills/image-gen/scripts python:3.12.11-slim \
+  bash -c 'pip install -q pytest numpy fal-client && python -m pytest -q -p no:cacheprovider'
+```

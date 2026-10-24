@@ -24,11 +24,20 @@ Usage:
         --arg prompt="..." --arg duration=10 --out ./clip.mp4
     uv run fal.py result kling/v4/image-to-video <request_id> --out ./clip.mp4
 
+    uv run fal.py run ENDPOINT --arg duration=5 --max-usd 2 --approved --out ./out/
+    uv run fal.py run ENDPOINT --dry-run --max-usd 0.40 --out ./out/
+    uv run fal.py spend [--since YYYY-MM-DD]
+
+Run flags: --max-usd FLOAT, --approved, --over-cap, --dry-run.
+Exit code 3 means refused by the spend guard.
 Auth: FAL_KEY env var, else FAL_KEY=... read from ~/.secrets/fal.env.
 """
 
 import argparse
 import json
+import math
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import os
 import sys
 import urllib.parse
@@ -39,19 +48,160 @@ PLATFORM_API = "https://api.fal.ai/v1"
 USER_AGENT = "nano-banana-multi/fal.py"
 
 
-def _load_key() -> str:
-    key = os.environ.get("FAL_KEY")
-    if not key:
+def _config(name: str, default: str | None = None) -> str | None:
+    value = os.environ.get(name)
+    if not value:
         env_file = Path.home() / ".secrets" / "fal.env"
         if env_file.exists():
             for line in env_file.read_text().splitlines():
-                if line.startswith("FAL_KEY="):
-                    key = line.split("=", 1)[1].strip().strip("'\"")
+                if line.startswith(f"{name}="):
+                    value = line.split("=", 1)[1].strip().strip("'\"")
+    return value or default
+
+
+def _load_key() -> str:
+    key = _config("FAL_KEY")
     if not key:
         print("Error: set FAL_KEY or create ~/.secrets/fal.env with FAL_KEY=...", file=sys.stderr)
         sys.exit(1)
     os.environ["FAL_KEY"] = key  # fal_client reads it from the environment
     return key
+
+
+@dataclass
+class Estimate:
+    usd: float | None
+    lower_bound: bool
+    note: str
+
+
+def _number(value) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise ValueError("Expected a finite, nonnegative number")
+    return number
+
+
+def estimate_cost(price: dict, arguments: dict) -> Estimate:
+    """Estimate documented units without guessing model-specific pricing."""
+    unit = str(price.get("unit", "unknown")).strip().lower()
+    lower = unit in ("second", "seconds") and any(
+        x in str(arguments.get("resolution", "")).lower() for x in ("1080", "4k", "2160")
+    )
+    note = "Pricing uses the 720p rate; higher resolution costs more." if lower else ""
+    try:
+        rate = _number(price["unit_price"])
+        if price.get("currency", "USD") != "USD":
+            return Estimate(None, lower, "Non-USD price; read the model page.")
+        if unit in ("second", "seconds"):
+            try:
+                quantity = _number(str(arguments["duration"]).strip().removesuffix("s"))
+            except (KeyError, TypeError, ValueError):
+                return Estimate(None, lower, f"Duration is unknown. {note}".strip())
+        elif unit in ("image", "images"):
+            quantity = _number(arguments.get("num_images", 1))
+        elif unit in ("megapixel", "megapixels"):
+            size = arguments.get("image_size")
+            if not isinstance(size, dict):
+                return Estimate(None, False, "Megapixel image dimensions are unknown.")
+            quantity = _number(size["width"]) * _number(size["height"]) / 1e6
+            quantity *= _number(arguments.get("num_images", 1))
+        elif unit in ("generation", "generations", "request", "requests", "video", "videos"):
+            quantity = 1
+        elif unit == "units" and rate == 1:
+            return Estimate(None, False, "Placeholder price; read the model page.")
+        else:
+            return Estimate(None, False, f"Unknown cost for unit {unit!r}; read the model page.")
+        return Estimate(_number(rate * quantity), lower, note)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return Estimate(None, lower, f"Invalid price or quantity for {unit}. {note}".strip())
+
+
+def guard(est: Estimate, max_usd: float | None, approved: bool, threshold: float,
+          month_spend: float | None, monthly_cap: float | None, over_cap: bool) -> tuple[bool, str]:
+    """Decide whether the estimated spend is authorized."""
+    try:
+        for value in (est.usd, max_usd, threshold, month_spend, monthly_cap):
+            if value is not None:
+                _number(value)
+    except (TypeError, ValueError):
+        return False, "Spend values must be finite and nonnegative."
+    if (est.usd is None or est.lower_bound) and max_usd is None:
+        return False, ("Read the price on https://fal.ai/models/<endpoint> and rerun with "
+                       "--max-usd <estimate>.")
+    effective = est.usd
+    if effective is None:
+        effective = max_usd
+    elif est.lower_bound:
+        effective = max(effective, max_usd)
+    elif max_usd is not None and effective > max_usd:
+        return False, f"Estimated ${effective:.4f} exceeds the stated ceiling --max-usd ${max_usd:.4f}."
+    if effective > threshold and not approved:
+        return False, (f"Estimated ${effective:.4f} is above the ${threshold:.4f} approval threshold "
+                       "(FAL_APPROVE_USD). Ask the user to approve this spend, then rerun with --approved.")
+    if monthly_cap is not None and not over_cap:
+        if month_spend is None:
+            return False, (f"Month-to-date spend unknown; run ${effective:.4f}; cannot enforce "
+                           f"FAL_MONTHLY_CAP_USD=${monthly_cap:.4f}. Usage lookup failed.")
+        if month_spend + effective > monthly_cap:
+            return False, (f"Month-to-date spend ${month_spend:.4f} + run ${effective:.4f} exceeds "
+                           f"FAL_MONTHLY_CAP_USD=${monthly_cap:.4f}. Rerun with --over-cap to override.")
+    return True, f"Allowed: estimated ${effective:.4f}."
+
+
+def _month_start() -> str:
+    return datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+
+def _usage(since: str) -> list[dict]:
+    params = [("start", since), ("expand", "summary")]
+    rows = []
+    cursors = set()
+    while True:
+        page = _platform_get("/models/usage", params)
+        rows.extend(page["summary"])
+        if not page.get("has_more"):
+            return rows
+        cursor = page.get("next_cursor")
+        if not cursor or cursor in cursors:
+            raise ValueError("Invalid usage pagination cursor")
+        cursors.add(cursor)
+        params = [("start", since), ("expand", "summary"), ("cursor", cursor)]
+
+
+def month_to_date_spend() -> float | None:
+    """Sum current UTC month usage, failing closed on unavailable usage."""
+    try:
+        return sum(_number(row["cost_total"]) for row in _usage(_month_start()))
+    except Exception as exc:
+        print(f"Warning: usage lookup failed: {exc}", file=sys.stderr)
+        return None
+
+
+def cmd_spend(args) -> None:
+    since = (datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+             if args.since else _month_start())
+    grouped = {}
+    for row in _usage(since):
+        key = (row["endpoint_id"], row["unit"])
+        quantity, cost = grouped.get(key, (0, 0))
+        grouped[key] = (quantity + _number(row["quantity"]), cost + _number(row["cost_total"]))
+    for (endpoint, unit), (quantity, cost) in sorted(grouped.items(), key=lambda item: -item[1][1]):
+        print(f"{endpoint} | {quantity:g} {unit} | ${cost:.4f}")
+    print(f"TOTAL ${sum(cost for _, cost in grouped.values()):.4f}")
+
+
+def _ledger(args, request_id: str, est: Estimate) -> None:
+    try:
+        path = Path.home() / ".cache/nano-banana-multi/fal-ledger.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = dict(ts=datetime.now(timezone.utc).isoformat(), endpoint=args.endpoint,
+                     request_id=request_id, estimate_usd=est.usd, lower_bound=est.lower_bound,
+                     max_usd=args.max_usd, approved=args.approved)
+        with path.open("a") as stream:
+            stream.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        print(f"Warning: could not append fal ledger: {exc}", file=sys.stderr)
 
 
 def _platform_get(path: str, params: list[tuple[str, str]]) -> dict:
@@ -169,28 +319,53 @@ def cmd_run(args) -> None:
 
 
 def _run(args) -> None:
-    import fal_client
-
-    _load_key()
     arguments: dict = {}
     if args.json:
         arguments.update(json.loads(Path(args.json).read_text()))
     for item in args.arg or []:
         key, _, raw = item.partition("=")
         _set_input(arguments, key, _parse_value(raw))
+    files = []
+    preview = json.loads(json.dumps(arguments))
     for item in args.file or []:
         key, _, path = item.partition("=")
         if not os.path.exists(path):
             print(f"Error: file not found: {path}", file=sys.stderr)
             sys.exit(1)
+        files.append((key, path))
+        _set_input(preview, key, f"<upload:{path}>")
+
+    prices = _prices([args.endpoint])
+    price = next((p for p in prices if p.get("endpoint_id") == args.endpoint), {})
+    est = estimate_cost(price, preview)
+    amount = "unknown" if est.usd is None else f"${est.usd:.4f}"
+    print(f"Price: {price.get('unit_price', 'unknown')} {price.get('currency', 'USD')} per "
+          f"{price.get('unit', 'unknown')}; estimate {amount}"
+          f"{' (lower bound)' if est.lower_bound else ''}; {est.note}", file=sys.stderr)
+    threshold = _number(_config("FAL_APPROVE_USD", "0.50"))
+    cap_value = _config("FAL_MONTHLY_CAP_USD")
+    cap = _number(cap_value) if cap_value is not None else None
+    spend = month_to_date_spend() if cap is not None else None
+    allowed, message = guard(est, args.max_usd, args.approved, threshold, spend, cap, args.over_cap)
+    message = message.replace("https://fal.ai/models/<endpoint>", f"https://fal.ai/models/{args.endpoint}")
+    print(message, file=sys.stderr)
+    if args.dry_run:
+        print(json.dumps(dict(arguments=preview, estimate=asdict(est),
+                              guard=dict(allowed=allowed, message=message)), indent=2))
+    if not allowed:
+        sys.exit(3)
+    if args.dry_run:
+        return
+
+    import fal_client
+
+    _load_key()
+    for key, path in files:
         _set_input(arguments, key, fal_client.upload_file(path))
-
-    for p in _prices([args.endpoint]):
-        print(f"Price: {p['unit_price']} {p['currency']} per {p['unit']}", file=sys.stderr)
-
     handle = fal_client.submit(args.endpoint, arguments=arguments)
     # Printed before waiting so a killed process can still recover the result.
     print(f"request_id: {handle.request_id}", file=sys.stderr, flush=True)
+    _ledger(args, handle.request_id, est)
     _save_outputs(handle.get(), args.out, handle.request_id)
 
 
@@ -231,12 +406,20 @@ def main() -> None:
     p.add_argument("endpoints", nargs="+")
     p.set_defaults(func=cmd_price)
 
+    p = sub.add_parser("spend", help="Show usage costs since a UTC date")
+    p.add_argument("--since", help="YYYY-MM-DD; defaults to the current UTC month")
+    p.set_defaults(func=cmd_spend)
+
     p = sub.add_parser("run", help="Submit a generation, wait, download outputs")
     p.add_argument("endpoint")
     p.add_argument("--arg", action="append", help="key=value (JSON-parsed if valid); key[]=v appends")
     p.add_argument("--file", action="append", help="key=path, uploaded to fal storage; key[]=path appends")
     p.add_argument("--json", help="JSON file with base arguments")
     p.add_argument("--out", required=True, help="Output file (single output) or directory")
+    p.add_argument("--max-usd", type=float)
+    p.add_argument("--approved", action="store_true")
+    p.add_argument("--over-cap", action="store_true")
+    p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("upload", help="Upload files to fal storage and print their URLs (for nested inputs)")

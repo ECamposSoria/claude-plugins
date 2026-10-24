@@ -1,32 +1,34 @@
 # nano-banana-multi
 
-Multi-provider image generation Claude Code plugin. Forked from the upstream `nano-banana-pro` plugin to add OpenAI `gpt-image-2` support.
+Claude Code plugin for AI generation: images (Gemini, gpt-image-2 through the Codex CLI, the Antigravity CLI
+image subagent) and, through fal.ai, video clips and 3D models. Started as a fork of `nano-banana-pro`. The
+skill registers as `image-gen`.
 
-## Install (local plugin)
+## Install
 
-Add this folder to Claude Code's plugin sources, then enable in `/plugin`. The skill registers as `image-gen`.
+From the `eze-claude-plugins` marketplace: `claude plugin install nano-banana-multi@eze-claude-plugins`.
+If the upstream `nano-banana-pro` plugin is also installed, disable it to avoid duplicate triggers.
 
-To avoid duplicate triggers, disable the upstream `nano-banana-pro` plugin (or leave both — the skill names don't collide).
+## Credentials (each only for its backend)
 
-## Environment setup (this VM)
+| Backend | Needs |
+|---|---|
+| `--model flash` / `pro` | `export GEMINI_API_KEY=...` |
+| `--model codex` | Codex CLI signed in (bills the ChatGPT plan; no `OPENAI_API_KEY`) |
+| `--model agy` | Antigravity CLI signed in (bills the Google AI Pro subscription) |
+| `fal.py` | `FAL_KEY=...` in `~/.secrets/fal.env` (mode 600), or exported |
 
-Add to `~/.bashrc`:
+## Spend guard
+
+Every `fal.py run` estimates its cost first. Runs above `FAL_APPROVE_USD` (default $0.50) need `--approved`,
+which the agent passes only after the user agrees. Set `FAL_MONTHLY_CAP_USD` (environment or `fal.env`) to
+cap the month. `fal.py spend` shows real spend per endpoint.
+
+## Smoke test (free)
 
 ```bash
-export GEMINI_API_KEY="<your-google-ai-key>"
-export OPENAI_API_KEY="<your-openai-key>"
-```
-
-Each key is only required if you actually use that provider.
-
-For fal.ai (images and video, `skills/image-gen/scripts/fal.py`), put `FAL_KEY=...` in
-`~/.secrets/fal.env` (mode 600) or export `FAL_KEY`.
-
-## Manual smoke test
-
-```bash
-uv run skills/image-gen/scripts/image.py \
-  --prompt "A minimalist tangerine on white" \
-  --output /tmp/smoke.png \
-  --model gpt
+uv run skills/image-gen/scripts/image.py --model agy \
+  --prompt "A minimalist tangerine on white" --output ./smoke.png
+uv run skills/image-gen/scripts/fal.py run fal-ai/flux/schnell --arg prompt="a tangerine" \
+  --max-usd 0.01 --dry-run --out ./smoke/     # prints "Allowed", exits 0, submits nothing
 ```
