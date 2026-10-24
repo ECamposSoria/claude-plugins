@@ -155,11 +155,29 @@ def parse_silencedetect(stderr: str, duration: float) -> list[tuple[float, float
 def parse_ebur128(stderr: str) -> tuple[float | None, float | None]:
     summary = stderr.rsplit("Summary:", 1)[-1]
     integrated = re.search(r"\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS", summary)
-    peak = re.search(r"\bPeak:\s*(-?\d+(?:\.\d+)?)\s+dBFS", summary)
+    peak = re.search(r"\bPeak:\s*(-inf|-?\d+(?:\.\d+)?)\s+dBFS", summary)
+    peak_value = None
+    if peak:
+        peak_value = float("-inf") if peak.group(1) == "-inf" else _number(peak.group(1))
     return (
         _number(integrated.group(1)) if integrated else None,
-        _number(peak.group(1)) if peak else None,
+        peak_value,
     )
+
+
+def stream_duration(stream: dict[str, Any] | None) -> float | None:
+    """A stream's own length: its duration field, else the Matroska DURATION tag (HH:MM:SS.fff)."""
+    if not stream:
+        return None
+    seconds = _number(stream.get("duration"))
+    if seconds:
+        return seconds
+    for key, value in (stream.get("tags") or {}).items():
+        if key.upper().startswith("DURATION"):
+            match = re.fullmatch(r"(\d+):(\d+):(\d+(?:\.\d+)?)", str(value).strip())
+            if match:
+                return int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+    return None
 
 
 def jump_indices(diffs: list[float]) -> list[int]:
@@ -211,7 +229,7 @@ def expected_frame_count(video: dict[str, Any], duration: float, fps: float) -> 
     frames = _number(video.get("nb_frames"))
     if frames:
         return frames, "nb_frames"
-    seconds = _number(video.get("duration")) or duration
+    seconds = stream_duration(video) or duration
     return seconds * (parse_rate(video.get("avg_frame_rate")) or fps), "duration × rate"
 
 
@@ -408,8 +426,8 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             for start, end in silence:
                 findings.append(Finding("WARN", "silence", f"silence from {start:.3f}s to {end:.3f}s ({end-start:.3f}s)", start))
             # measure against the audio track itself: a short silent track must not hide in a long container
-            audio_duration = _number(audio_stream.get("duration")) or duration
-            picture_duration = _number(video.get("duration")) or duration
+            audio_duration = stream_duration(audio_stream) or duration
+            picture_duration = stream_duration(video) or duration
             if audio_duration and picture_duration and audio_duration < picture_duration - 0.5:
                 findings.append(Finding("WARN", "audio", f"audio ends at {audio_duration:.3f}s, picture runs to {picture_duration:.3f}s"))
             if audio_duration and silent_total >= audio_duration * 0.95:
@@ -418,10 +436,13 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 findings.append(Finding("PASS", "silence", "no silence intervals of 1s or longer"))
             loudness = _ffmpeg_filter(args.video, "ebur128", "ebur128=peak=true", limit)
             integrated, peak = parse_ebur128(loudness)
-            if integrated is not None and integrated <= -60:
-                # catches silent tracks shorter than silencedetect's 1 s minimum
-                findings.append(Finding("FAIL", "silence", f"audio track is silent (integrated {integrated:.1f} LUFS)"))
-            if integrated is not None:
+            if peak is not None and peak <= -60:
+                # catches silent tracks shorter than silencedetect's 1 s minimum; the true peak is
+                # used because EBU R128 reports -70 LUFS for any audio under its 400 ms window
+                findings.append(Finding("FAIL", "silence", f"audio track is silent (true peak {peak:.1f} dBFS)"))
+            if audio_duration and audio_duration < 0.4:
+                findings.append(Finding("INFO", "loudness", f"audio too short ({audio_duration:.3f}s) to measure loudness"))
+            elif integrated is not None:
                 level = "WARN" if abs(integrated - args.loudness_target) > 1.5 else "PASS"
                 findings.append(Finding(level, "loudness", f"integrated loudness {integrated:.1f} LUFS (target {args.loudness_target:g})"))
             else:
@@ -436,7 +457,8 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         expected_frames, source = expected_frame_count(video, duration, actual_fps)
         # Truncation is judged on the timeline: where decoded playback actually ends. Header counts
         # can include edit-list preroll (stream-copied trims) and estimates use nominal rates.
-        picture_duration = _number(video.get("duration")) or duration
+        # the container length is only the picture's length when nothing else is in the file
+        picture_duration = stream_duration(video) or (duration if len(probe.get("streams", [])) == 1 else None)
         played = (last_frame + 1.0 / actual_fps) if last_frame is not None else 0.0
         if picture_duration and played < picture_duration - max(0.5, 0.05 * picture_duration):
             findings.append(Finding("FAIL", "frames", f"playback ends at {played:.3f}s of {picture_duration:.3f}s "
@@ -452,7 +474,7 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             findings.append(Finding("PASS", "jump", "no isolated frame jumps detected"))
 
         if args.sheet:
-            sheet_duration = _number(video.get("duration"))
+            sheet_duration = stream_duration(video)
             times = _make_sheet(args.video, args.sheet,
                                 sheet_duration if sheet_duration is not None else duration, args.sheet_frames, video_index,
                                 last_frame)

@@ -436,3 +436,40 @@ def test_half_second_silent_track_fails(tmp_path):
     proc = run_cli(video, "--expect-audio", expect_duration="3")
     assert proc.returncode == 1
     assert any(f["check"] == "silence" and f["level"] == "FAIL" for f in result_json(proc)["findings"])
+
+
+def test_stream_duration_reads_matroska_tags_and_ebur128_reads_inf_peak():
+    assert qa.stream_duration({"duration": "2.5"}) == 2.5
+    assert qa.stream_duration({"tags": {"DURATION": "00:00:02.021000000"}}) == pytest.approx(2.021)
+    assert qa.stream_duration({"tags": {"DURATION-eng": "00:01:03.5"}}) == pytest.approx(63.5)
+    assert qa.stream_duration({}) is None
+    integrated, peak = qa.parse_ebur128("Summary:\n  I: -70.0 LUFS\n  True peak:\n    Peak: -inf dBFS\n")
+    assert integrated == -70.0 and peak == float("-inf")
+
+
+def test_complete_matroska_video_with_longer_soundtrack_passes(tmp_path):
+    video = tmp_path / "long-audio.mkv"
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+                           "-f", "lavfi", "-i", "testsrc=s=320x240:r=24:d=2",
+                           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4",
+                           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)],
+                          capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--json"], capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout
+    assert not any(f["check"] == "frames" and f["level"] == "FAIL" for f in result_json(proc)["findings"])
+
+
+def test_audible_tone_shorter_than_the_loudness_window_is_not_silent(tmp_path):
+    video = tmp_path / "short-tone.mp4"
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+                           "-f", "lavfi", "-i", "color=c=green:s=320x240:r=24:d=1",
+                           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=0.25",
+                           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)],
+                          capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--expect-audio", "--json"],
+                          capture_output=True, text=True, timeout=15)
+    findings = result_json(proc)["findings"]
+    assert not any(f["check"] == "silence" and f["level"] == "FAIL" for f in findings), findings
+    assert any(f["check"] == "loudness" and "too short" in f["message"] for f in findings)
