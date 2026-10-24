@@ -6,8 +6,8 @@ Prices checked on each model page on 2026-10-24. The catalog changes weekly: con
 🔴 **The pricing API is not the price.** `fal.py price` can be wrong in both directions. It reports the
 720p rate for Kling 4.0 (1080p costs 1.5× more). For Kling 3.0 Pro it reports $0.14/s, but the page
 charges $0.112/s. For OpenAI endpoints it reports a placeholder `1 USD per units`, and for 3D models it
-reports "units"/"credits" with no meaning. The model page is the source of truth, and it is what you pass
-as `--max-usd`.
+reports "units"/"credits" with no meaning; Nano Banana Pro doubles at 4K. The model page is the source of
+truth, and the full price of the request is what you pass as `--max-usd` on every paid run.
 
 ## Images
 
@@ -16,7 +16,7 @@ as `--max-usd`.
 | `openai/gpt-image-2.5/flare/edit` | $0.039 high @1920×1072, +$0.008 per reference | **Default paid edit.** Keeps subject, composition and background. |
 | `openai/gpt-image-2.5/sunburst/edit` | see model page | Tightest scoping across many revision rounds |
 | `openai/gpt-image-2/edit` | $0.158 high @1920×1080 | Same model as `image.py --model codex`; prefer 2.5 Flare |
-| `fal-ai/nano-banana-pro/edit` | $0.15 / image | 4K, multi-image composition |
+| `fal-ai/nano-banana-pro/edit` | $0.15 / image, **$0.30 at 4K**, +$0.015 with web search | 4K, multi-image composition |
 | `fal-ai/seedvr/upscale/image` | $0.001 / megapixel | Upscale a 1376×768 Antigravity frame to 1080p+ (~$0.003) |
 | `fal-ai/finegrain-eraser/mask` | $0.045 / image, `mode=standard` | Remove an object and keep the camera geometry (see below) |
 | `fal-ai/sam-3/image` | $0.005 | Segmentation masks. Masks have holes exactly at printed logos. |

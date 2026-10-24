@@ -22,9 +22,13 @@ Local changes, all mechanical:
    motion review gate in Step 4.
 6. `improve-animations/PLAN-TEMPLATE.md`: nested code fences escaped with zero-width spaces are now `~~~`
    fences, so generated plans don't carry invisible characters.
+7. `emil-design-eng/SKILL.md`, "Spring-based mouse interactions": the example passed a plain number to
+   `useSpring`, which only sets its initial value, so the effect never moved (found by Codex review,
+   reproduced). It now feeds a `useTransform` of a `MotionValue`, imports from `motion/react`, and shows the
+   `style` binding.
 
 Security review on 2026-10-24: static scan plus a prose read of every file; no instructions outside each
 skill's stated job, no network fetches, no settings or permission edits.
 
-To update: diff the new upstream commit against these folders, re-apply the six changes, update the commit
+To update: diff the new upstream commit against these folders, re-apply the seven changes, update the commit
 above.

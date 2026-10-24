@@ -202,3 +202,48 @@ def test_frame_shortfall_fails_without_decode_errors(monkeypatch, tmp_path, caps
     assert any(f["check"] == "decode" and f["level"] == "PASS" for f in findings)
     assert any(f["check"] == "frames" and f["level"] == "FAIL" and
                f["message"] == "decoded 46 of ~48 expected frames" for f in findings)
+
+
+def test_contact_sheet_samples_picture_when_audio_is_longer(tmp_path):
+    video = tmp_path / "long-audio.mp4"
+    sheet = tmp_path / "long-audio.jpg"
+    command = ["ffmpeg", "-threads", "1", "-filter_threads", "1", "-hide_banner",
+               "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+               "color=c=green:s=320x240:r=24:d=2", "-f", "lavfi", "-i",
+               "sine=frequency=440:sample_rate=48000:duration=4",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)]
+    made = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = run_cli(video, "--sheet", str(sheet), "--sheet-frames", "4", expect_duration="4")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = result_json(proc)
+    stream = next(s for s in data["probe"]["streams"] if s["codec_type"] == "video")
+    assert float(stream["duration"]) == pytest.approx(2)
+    assert float(data["probe"]["format"]["duration"]) == pytest.approx(4, abs=.1)
+    assert sheet.is_file() and sheet.stat().st_size > 0
+    assert sheet.read_bytes().startswith(b"\xff\xd8")
+    assert any(f["check"] == "sheet" and "1.50s" in f["message"] for f in data["findings"])
+
+
+def test_variable_rate_jump_uses_presentation_time(tmp_path):
+    video = tmp_path / "variable-rate.mp4"
+    graph = ("color=c=red:s=320x240:r=15:d=2[a];"
+             "color=c=blue:s=320x240:r=30:d=2[b];"
+             "[a][b]concat=n=2:v=1:a=0[out]")
+    command = ["ffmpeg", "-threads", "1", "-filter_threads", "1", "-hide_banner",
+               "-loglevel", "error", "-y", "-f", "lavfi", "-i", graph,
+               "-fps_mode", "passthrough", "-enc_time_base", "1:30", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)]
+    made = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    jumps, count = qa._jump_indices(str(video))
+    assert count == 90
+    assert len(jumps) == 1
+    assert jumps[0][0] == 30
+    assert jumps[0][1] == pytest.approx(2, abs=.05)
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--json"],
+                          capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    findings = [f for f in result_json(proc)["findings"] if f["check"] == "jump"]
+    assert len(findings) == 1
+    assert findings[0]["t"] == pytest.approx(2, abs=.05)
+    assert "frame 30 (2.000s)" in findings[0]["message"]

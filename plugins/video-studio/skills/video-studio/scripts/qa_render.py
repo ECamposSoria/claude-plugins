@@ -202,8 +202,8 @@ def _ffmpeg_filter(video: str, filter_name: str, filter_expr: str, timeout: floa
     return proc.stderr
 
 
-def _jump_indices(video: str, timeout: float = 60.0) -> tuple[list[int], int]:
-    command = ["ffmpeg", "-nostdin", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "error", "-i", video, "-vf", "scale=320:180,format=gray", "-an", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+def _jump_indices(video: str, timeout: float = 60.0) -> tuple[list[tuple[int, float]], int]:
+    command = ["ffmpeg", "-nostdin", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "info", "-nostats", "-i", video, "-vf", "scale=320:180,format=gray,showinfo=checksum=0", "-an", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
     frame_size = 320 * 180
     error_file = tempfile.TemporaryFile()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error_file, bufsize=0)
@@ -241,16 +241,35 @@ def _jump_indices(video: str, timeout: float = 60.0) -> tuple[list[int], int]:
             process.wait()
             raise RuntimeError("frame-difference ffmpeg pass timed out")
         error_file.seek(0)
-        error = error_file.read().decode("utf-8", "replace")
         if code:
+            error_file.seek(max(0, os.fstat(error_file.fileno()).st_size - 2000))
+            error = error_file.read().decode("utf-8", "replace")
             raise RuntimeError(f"frame-difference ffmpeg failed: {error.strip()[-500:]}")
+        # Spool stderr to disk to avoid blocking the raw-frame pipe. Retain only
+        # jump timestamps while reading showinfo one line at a time.
+        indices = set(jump_indices(diffs))
+        jumps: list[tuple[int, float]] = []
+        timestamp_count = 0
+        for line in error_file:
+            match = re.search(rb"\bn:\s*(\d+).*?\bpts_time:\s*(\S+)", line)
+            if not match:
+                continue
+            index = int(match.group(1))
+            timestamp = _number(match.group(2))
+            if index != timestamp_count or timestamp is None:
+                raise RuntimeError("invalid frame presentation timestamps")
+            timestamp_count += 1
+            if index in indices:
+                jumps.append((index, timestamp))
+        if timestamp_count != len(diffs) + int(previous is not None):
+            raise RuntimeError("frame presentation timestamp count does not match decoded frames")
     finally:
         if process.poll() is None:
             process.kill()
             process.wait()
         process.stdout.close()
         error_file.close()
-    return jump_indices(diffs), len(diffs) + int(previous is not None)
+    return jumps, len(diffs) + int(previous is not None)
 
 
 def _make_sheet(video: str, destination: str, duration: float, frames: int) -> list[float]:
@@ -372,8 +391,7 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         expected_frames = expected_frame_count(video, duration, actual_fps)
         if frame_count < 0.98 * expected_frames:
             findings.append(Finding("FAIL", "frames", f"decoded {frame_count} of ~{expected_frames:g} expected frames"))
-        for frame_index in jumps:
-            timestamp = frame_index / (actual_fps or args.expect_fps or 1)
+        for frame_index, timestamp in jumps:
             level = "WARN" if args.mode == "clip" else "INFO"
             desc = "possible one-frame pop" if args.mode == "clip" else "cut"
             findings.append(Finding(level, "jump", f"{desc} at frame {frame_index} ({timestamp:.3f}s)", timestamp))
@@ -381,7 +399,9 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             findings.append(Finding("PASS", "jump", "no isolated frame jumps detected"))
 
         if args.sheet:
-            times = _make_sheet(args.video, args.sheet, duration or args.expect_duration, args.sheet_frames)
+            sheet_duration = _number(video.get("duration"))
+            times = _make_sheet(args.video, args.sheet,
+                                sheet_duration if sheet_duration is not None else duration, args.sheet_frames)
             findings.append(Finding("INFO", "sheet", f"contact sheet saved to {args.sheet}; frames at " + ", ".join(f"{t:.2f}s" for t in times)))
         return _result(args.video, probe, findings), int(any(f.level == "FAIL" for f in findings))
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, RuntimeError) as exc:

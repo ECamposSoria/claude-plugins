@@ -114,7 +114,10 @@ def estimate_cost(price: dict, arguments: dict) -> Estimate:
             return Estimate(None, False, "Placeholder price; read the model page.")
         else:
             return Estimate(None, False, f"Unknown cost for unit {unit!r}; read the model page.")
-        return Estimate(_number(rate * quantity), lower, note)
+        usd = _number(rate * quantity)
+        hint = ("The pricing API rate is only a hint; options such as resolution, quality, "
+                "audio and image count change the price; read the model page.")
+        return Estimate(usd, True, f"{hint} {note}".strip())
     except (KeyError, TypeError, ValueError, OverflowError):
         return Estimate(None, lower, f"Invalid price or quantity for {unit}. {note}".strip())
 

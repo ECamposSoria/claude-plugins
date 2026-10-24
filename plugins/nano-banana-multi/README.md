@@ -20,8 +20,9 @@ If the upstream `nano-banana-pro` plugin is also installed, disable it to avoid 
 
 ## Spend guard
 
-Every `fal.py run` estimates its cost first. Runs above `FAL_APPROVE_USD` (default $0.50) need `--approved`,
-which the agent passes only after the user agrees. Set `FAL_MONTHLY_CAP_USD` (environment or `fal.env`) to
+Every `fal.py run` states its full price with `--max-usd` (from the model page; fal's pricing API is only a
+floor). Runs above `FAL_APPROVE_USD` (default $0.50) also need `--approved`, which the agent passes only after
+the user agrees. Set `FAL_MONTHLY_CAP_USD` (environment or `fal.env`) to
 cap the month. `fal.py spend` shows real spend per endpoint.
 
 ## Smoke test (free)

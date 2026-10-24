@@ -101,17 +101,19 @@ else a directory; the raw result is saved beside it as `fal-<request_id>.json`. 
 
 ### Spend guard
 
-`run` estimates the cost before uploading anything and exits with code 3 when the spend is not allowed:
+`run` estimates the cost before uploading anything and exits with code 3 when the spend is not allowed.
+**Every paid run passes `--max-usd`** with the full price for this request, worked out from the model page or
+`references/fal-endpoints.md` (duration × rate, image count, resolution, audio, add-ons). The pricing API is
+only a floor: resolution, quality, audio and their schema defaults have each raised a real price above it.
 
 | Guard says | Do |
 |---|---|
-| cannot estimate (per-token, per-"unit", 3D, OpenAI placeholder) | Read the model page, rerun with `--max-usd <your estimate>` |
-| any video (per-second price) | Always pass `--max-usd` with the price from the model page: resolution and audio change it, and their schema defaults can be the expensive option |
-| above the approval threshold (`FAL_APPROVE_USD`, default $0.50) | **Ask the user**, quoting the estimate. Rerun with `--approved` only after they say yes. |
+| read the price and rerun with `--max-usd` | Work out the full price, rerun with `--max-usd <it>` |
+| above the approval threshold (`FAL_APPROVE_USD`, default $0.50) | **Ask the user**, quoting the price. Rerun with `--approved` only after they say yes. |
 | over the monthly cap (`FAL_MONTHLY_CAP_USD`, unset = no cap) | Report month-to-date spend; `--over-cap` only if the user raises or waives the cap |
 
 The endpoint's schema defaults are merged in before estimating (an omitted `duration` uses its default), and
-the higher of the estimate and `--max-usd` is what gets approved. Never pass `--approved` or `--over-cap` on
+the higher of the API floor and `--max-usd` is what gets approved. Never pass `--approved` or `--over-cap` on
 your own judgement. `--dry-run` shows the arguments, the estimate
 and the decision without uploading or submitting. `fal.py spend [--since YYYY-MM-DD]` prints real spend
 per endpoint from fal's usage API (default: this month). Each submitted run is logged to
