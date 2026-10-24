@@ -343,9 +343,10 @@ def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tu
 
 
 def _make_sheet(video: str, destination: str, duration: float, frames: int, video_index: int = 0,
-                last_frame: float | None = None) -> list[float]:
+                last_frame: float | None = None, offset: float = 0.0) -> list[float]:
     count = max(1, frames)
-    times = [i * duration / count for i in range(count)]
+    # offset = where the picture starts on the file's timeline (video that starts after the audio)
+    times = [offset + i * duration / count for i in range(count)]
     if last_frame is not None:
         # never seek past the last decoded frame (tiny clips, containers longer than the picture)
         times = [min(t, last_frame) for t in times]
@@ -503,7 +504,7 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             sheet_duration = stream_duration(video)
             times = _make_sheet(args.video, args.sheet,
                                 sheet_duration if sheet_duration is not None else duration, args.sheet_frames, video_index,
-                                last_frame)
+                                last_frame, max(0.0, stream_start(video) - stream_start(probe.get("format"))))
             findings.append(Finding("INFO", "sheet", f"contact sheet saved to {args.sheet}; frames at " + ", ".join(f"{t:.2f}s" for t in times)))
         return _result(args.video, probe, findings), int(any(f.level == "FAIL" for f in findings))
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, RuntimeError) as exc:

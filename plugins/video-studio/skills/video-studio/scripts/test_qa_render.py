@@ -518,3 +518,23 @@ def test_matroska_with_a_timestamp_offset_passes(tmp_path):
     assert qa.stream_duration(stream) == pytest.approx(2, abs=.05)
     proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--json"], capture_output=True, text=True, timeout=15)
     assert proc.returncode == 0, proc.stdout
+
+
+def test_contact_sheet_starts_where_a_delayed_picture_starts(tmp_path):
+    video = tmp_path / "delayed-video.mkv"   # MP4/MOV muxers normalise a delayed video start to 0
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+                           "-itsoffset", "2", "-f", "lavfi", "-i", "testsrc=s=320x240:r=24:d=2",
+                           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4",
+                           "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                           str(video)], capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    streams = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(video)],
+                                        capture_output=True, text=True).stdout)["streams"]
+    assert float(next(s for s in streams if s["codec_type"] == "video")["start_time"]) == pytest.approx(2, abs=.1)
+    sheet = tmp_path / "delayed.jpg"
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--sheet", str(sheet), "--sheet-frames", "4", "--json"],
+                          capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout
+    message = next(f["message"] for f in result_json(proc)["findings"] if f["check"] == "sheet")
+    times = [float(x.rstrip("s")) for x in message.split("frames at ")[1].split(", ")]
+    assert len(set(times)) == 4 and all(2.0 <= x < 4.0 for x in times), message
