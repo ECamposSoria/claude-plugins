@@ -122,6 +122,11 @@ def estimate_cost(price: dict, arguments: dict) -> Estimate:
         return Estimate(None, lower, f"Invalid price or quantity for {unit}. {note}".strip())
 
 
+def _exceeds(amount: float, limit: float) -> bool:
+    """Money comparison at billing precision: 0.1 * 3 is not more than 0.30."""
+    return amount - limit > 1e-9
+
+
 def guard(est: Estimate, max_usd: float | None, approved: bool, threshold: float,
           month_spend: float | None, monthly_cap: float | None, over_cap: bool) -> tuple[bool, str]:
     """Decide whether the estimated spend is authorized."""
@@ -134,17 +139,17 @@ def guard(est: Estimate, max_usd: float | None, approved: bool, threshold: float
     if (est.usd is None or est.lower_bound) and max_usd is None:
         return False, ("Read the price on https://fal.ai/models/<endpoint> and rerun with "
                        "--max-usd <estimate>.")
-    if est.usd is not None and not est.lower_bound and max_usd is not None and est.usd > max_usd:
+    if est.usd is not None and not est.lower_bound and max_usd is not None and _exceeds(est.usd, max_usd):
         return False, f"Estimated ${est.usd:.4f} exceeds the stated ceiling --max-usd ${max_usd:.4f}."
     effective = _effective_usd(est, max_usd)
-    if effective > threshold and not approved:
+    if _exceeds(effective, threshold) and not approved:
         return False, (f"Estimated ${effective:.4f} is above the ${threshold:.4f} approval threshold "
                        "(FAL_APPROVE_USD). Ask the user to approve this spend, then rerun with --approved.")
     if monthly_cap is not None and not over_cap:
         if month_spend is None:
             return False, (f"Month-to-date spend unknown; run ${effective:.4f}; cannot enforce "
                            f"FAL_MONTHLY_CAP_USD=${monthly_cap:.4f}. Usage lookup failed.")
-        if month_spend + effective > monthly_cap:
+        if _exceeds(month_spend + effective, monthly_cap):
             return False, (f"Month-to-date spend ${month_spend:.4f} + run ${effective:.4f} exceeds "
                            f"FAL_MONTHLY_CAP_USD=${monthly_cap:.4f}. Rerun with --over-cap to override.")
     return True, f"Allowed: estimated ${effective:.4f}."

@@ -196,7 +196,7 @@ def test_truncated_faststart_clip_fails(tmp_path):
 def test_count_shortfall_on_a_complete_timeline_only_warns(monkeypatch, tmp_path, capsys):
     video = tmp_path / "normal.mp4"
     make_video(video, "color=c=green:s=320x240:r=24:d=2", 2, audio=False)
-    monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 46, 1.875))
+    monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 46, 1.875, None))
     assert qa.main([str(video), "--json"]) == 0
     findings = json.loads(capsys.readouterr().out)["findings"]
     assert any(f["check"] == "decode" and f["level"] == "PASS" for f in findings)
@@ -206,7 +206,7 @@ def test_count_shortfall_on_a_complete_timeline_only_warns(monkeypatch, tmp_path
 def test_playback_ending_early_fails_without_decode_errors(monkeypatch, tmp_path, capsys):
     video = tmp_path / "normal.mp4"
     make_video(video, "color=c=green:s=320x240:r=24:d=2", 2, audio=False)
-    monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 24, 0.958))
+    monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 24, 0.958, None))
     assert qa.main([str(video), "--json"]) == 1
     findings = json.loads(capsys.readouterr().out)["findings"]
     assert any(f["check"] == "frames" and f["level"] == "FAIL" and "playback ends at 1.000s of 2.000s" in f["message"]
@@ -244,7 +244,7 @@ def test_variable_rate_jump_uses_presentation_time(tmp_path):
                "-fps_mode", "passthrough", "-enc_time_base", "1:30", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)]
     made = subprocess.run(command, capture_output=True, text=True, timeout=15)
     assert made.returncode == 0, made.stderr
-    jumps, count, last = qa._jump_indices(str(video))
+    jumps, count, last, held = qa._jump_indices(str(video))
     assert count == 90
     assert last == pytest.approx(3.967, abs=.05)
     assert len(jumps) == 1
@@ -473,3 +473,34 @@ def test_audible_tone_shorter_than_the_loudness_window_is_not_silent(tmp_path):
     findings = result_json(proc)["findings"]
     assert not any(f["check"] == "silence" and f["level"] == "FAIL" for f in findings), findings
     assert any(f["check"] == "loudness" and "too short" in f["message"] for f in findings)
+
+
+def test_playback_end_uses_the_last_frames_real_duration():
+    assert qa.playback_end(1.958, 2.0, 24) == pytest.approx(3.958)      # end card held 2 s
+    assert qa.playback_end(1.958, None, 24) == pytest.approx(2.0, abs=.01)  # no duration reported
+    assert qa.playback_end(None, None, 24) == 0.0
+
+
+def test_jump_pass_reports_the_last_frames_duration(tmp_path):
+    video = tmp_path / "normal.mp4"
+    make_video(video, "color=c=green:s=320x240:r=24:d=1", 1, audio=False)
+    _, count, last, held = qa._jump_indices(str(video))
+    assert count == 24
+    assert last == pytest.approx(23 / 24, abs=.01)
+    assert held == pytest.approx(1 / 24, abs=.01)
+
+
+def test_delayed_audio_ending_with_the_picture_is_not_flagged(tmp_path):
+    video = tmp_path / "delayed-audio.mp4"
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+                           "-f", "lavfi", "-i", "testsrc=s=320x240:r=24:d=4",
+                           "-itsoffset", "2", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+                           "-map", "0:v", "-map", "1:a",
+                           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)],
+                          capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    audio = next(s for s in json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(video)],
+                 capture_output=True, text=True).stdout)["streams"] if s["codec_type"] == "audio")
+    assert float(audio["start_time"]) == pytest.approx(2, abs=.1)   # the fixture really is delayed
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--json"], capture_output=True, text=True, timeout=15)
+    assert not any(f["check"] == "audio" and "audio ends at" in f["message"] for f in result_json(proc)["findings"])

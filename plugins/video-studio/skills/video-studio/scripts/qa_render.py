@@ -233,6 +233,19 @@ def expected_frame_count(video: dict[str, Any], duration: float, fps: float) -> 
     return seconds * (parse_rate(video.get("avg_frame_rate")) or fps), "duration × rate"
 
 
+def playback_end(last_pts: float | None, last_duration: float | None, fps: float) -> float:
+    """When decoded playback ends: the last frame's timestamp plus how long that frame is shown.
+
+    A VFR clip can hold its final frame far longer than one frame interval (an end card)."""
+    if last_pts is None:
+        return 0.0
+    return last_pts + (last_duration if last_duration and last_duration > 0 else 1.0 / fps)
+
+
+def stream_start(stream: dict[str, Any] | None) -> float:
+    return (_number((stream or {}).get("start_time")) or 0.0) if stream else 0.0
+
+
 def pass_timeout(duration: float | None) -> float:
     """Each pass decodes the whole file on one thread, so the limit grows with its length."""
     return max(60.0, 4.0 * (duration or 0.0))
@@ -249,7 +262,7 @@ def _ffmpeg_filter(video: str, filter_name: str, filter_expr: str, timeout: floa
     return proc.stderr
 
 
-def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tuple[list[tuple[int, float]], int, float | None]:
+def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tuple[list[tuple[int, float]], int, float | None, float | None]:
     command = ["ffmpeg", "-nostdin", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "info", "-nostats", "-i", video, "-map", f"0:{video_index}", "-vf", "scale=320:180,format=gray,showinfo=checksum=0", "-an", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
     frame_size = 320 * 180
     error_file = tempfile.TemporaryFile()
@@ -298,6 +311,7 @@ def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tu
         jumps: list[tuple[int, float]] = []
         timestamp_count = 0
         last_timestamp: float | None = None
+        last_duration: float | None = None
         for line in error_file:
             match = re.search(rb"\bn:\s*(\d+).*?\bpts_time:\s*(\S+)", line)
             if not match:
@@ -308,6 +322,8 @@ def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tu
                 raise RuntimeError("invalid frame presentation timestamps")
             timestamp_count += 1
             last_timestamp = timestamp
+            held = re.search(rb"\bduration_time:\s*(\S+)", line)
+            last_duration = _number(held.group(1)) if held else None
             if index in indices:
                 jumps.append((index, timestamp))
         if timestamp_count != len(diffs) + int(previous is not None):
@@ -318,7 +334,7 @@ def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tu
             process.wait()
         process.stdout.close()
         error_file.close()
-    return jumps, len(diffs) + int(previous is not None), last_timestamp
+    return jumps, len(diffs) + int(previous is not None), last_timestamp, last_duration
 
 
 def _make_sheet(video: str, destination: str, duration: float, frames: int, video_index: int = 0,
@@ -428,8 +444,11 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             # measure against the audio track itself: a short silent track must not hide in a long container
             audio_duration = stream_duration(audio_stream) or duration
             picture_duration = stream_duration(video) or duration
-            if audio_duration and picture_duration and audio_duration < picture_duration - 0.5:
-                findings.append(Finding("WARN", "audio", f"audio ends at {audio_duration:.3f}s, picture runs to {picture_duration:.3f}s"))
+            # compare END times on one timeline: delayed audio can be shorter and still end with the picture
+            audio_end = stream_start(audio_stream) + (audio_duration or 0.0)
+            picture_end = stream_start(video) + (picture_duration or 0.0)
+            if audio_duration and picture_duration and audio_end < picture_end - 0.5:
+                findings.append(Finding("WARN", "audio", f"audio ends at {audio_end:.3f}s, picture runs to {picture_end:.3f}s"))
             if audio_duration and silent_total >= audio_duration * 0.95:
                 findings.append(Finding("FAIL", "silence", f"audio is silent for {silent_total:.3f}s of {audio_duration:.3f}s"))
             elif not silence:
@@ -453,15 +472,17 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             else:
                 findings.append(Finding("WARN", "peak", "could not parse true peak"))
 
-        jumps, frame_count, last_frame = _jump_indices(args.video, limit, video_index)
+        jumps, frame_count, last_frame, last_frame_duration = _jump_indices(args.video, limit, video_index)
         expected_frames, source = expected_frame_count(video, duration, actual_fps)
         # Truncation is judged on the timeline: where decoded playback actually ends. Header counts
         # can include edit-list preroll (stream-copied trims) and estimates use nominal rates.
         # the container length is only the picture's length when nothing else is in the file
         picture_duration = stream_duration(video) or (duration if len(probe.get("streams", [])) == 1 else None)
-        played = (last_frame + 1.0 / actual_fps) if last_frame is not None else 0.0
-        if picture_duration and played < picture_duration - max(0.5, 0.05 * picture_duration):
-            findings.append(Finding("FAIL", "frames", f"playback ends at {played:.3f}s of {picture_duration:.3f}s "
+        played = playback_end(last_frame, last_frame_duration, actual_fps)
+        # decoded timestamps start at the file's start time, so place the picture on the same timeline
+        picture_end = (stream_start(video) - stream_start(probe.get("format"))) + (picture_duration or 0.0)
+        if picture_duration and played < picture_end - max(0.5, 0.05 * picture_duration):
+            findings.append(Finding("FAIL", "frames", f"playback ends at {played:.3f}s of {picture_end:.3f}s "
                                                       f"({frame_count} frames decoded)"))
         elif frame_count < 0.98 * expected_frames:
             findings.append(Finding("WARN", "frames", f"decoded {frame_count} of ~{expected_frames:g} frames counted by "

@@ -409,3 +409,15 @@ def test_nano_banana_pro_4k_requires_budget_and_approval(monkeypatch, run_stub, 
         assert "--max-usd" in output["guard"]["message"]
     assert run_stub == []
     assert not fal._ledger_path().exists()
+
+
+def test_money_boundaries_are_compared_at_billing_precision():
+    # three $0.10 images against a $0.30 threshold: 0.1 * 3 == 0.30000000000000004 in floats
+    allowed, _ = fal.guard(fal.Estimate(0.1 * 3, True, ""), 0.30, False, 0.30, None, None, False)
+    assert allowed
+    # $0.05 + $7.98 spent + $1.97 run against a $10.00 cap sums to 10.000000000000002
+    allowed, _ = fal.guard(fal.Estimate(1.97, True, ""), 1.97, True, 0.50, 0.05 + 7.98, 10.0, False)
+    assert allowed
+    # a real overrun by one cent is still refused
+    allowed, _ = fal.guard(fal.Estimate(1.98, True, ""), 1.98, True, 0.50, 0.05 + 7.98, 10.0, False)
+    assert not allowed
