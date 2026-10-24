@@ -48,14 +48,29 @@ def parse_rate(value: str | None) -> float | None:
         return None
 
 
-def parse_probe(data: dict[str, Any]) -> list[Finding]:
+def select_video_stream(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Select the first video track that is not embedded cover art."""
+    return next((s for s in data.get("streams", []) if s.get("codec_type") == "video"
+                 and (s.get("disposition") or {}).get("attached_pic") != 1), None)
+
+
+def decode_error_lines(stderr: str) -> list[str]:
+    """Ignore muxer timestamp rounding noise, retaining other diagnostics."""
+    return [line for line in stderr.splitlines()
+            if not (re.search(r"\bnon[\s-]*monotonic(?:ally)?\b", line, re.I)
+                    and re.search(r"\b(?:dts|pts)\b", line, re.I))]
+
+
+def parse_probe(data: dict[str, Any], video: dict[str, Any] | None = None) -> list[Finding]:
     findings: list[Finding] = []
     streams = data.get("streams") or []
-    video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
+    video = video if video is not None else select_video_stream(data)
     audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
     if video is None:
         return [Finding("FAIL", "probe", "no video stream found")]
 
+    if sum(s.get("codec_type") == "video" for s in streams) > 1:
+        findings.append(Finding("INFO", "probe", f"analysed video stream index={video['index']}"))
     size = f"{video.get('width', '?')}x{video.get('height', '?')}"
     findings.append(Finding("INFO", "probe", f"video codec={video.get('codec_name', '?')}, size={size}"))
     rate = parse_rate(video.get("r_frame_rate"))
@@ -173,7 +188,7 @@ def _run(command: list[str], timeout: float = 45) -> subprocess.CompletedProcess
     return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
 
 
-def expected_frame_count(video: dict[str, Any], duration: float, fps: float) -> float:
+def expected_frame_count(video: dict[str, Any], duration: float, fps: float) -> tuple[float, str]:
     """Frames the video stream should decode to: its own header count, else its own duration × average rate.
 
     The container duration can be longer than the picture (a music bed) and r_frame_rate overstates
@@ -181,9 +196,9 @@ def expected_frame_count(video: dict[str, Any], duration: float, fps: float) -> 
     """
     frames = _number(video.get("nb_frames"))
     if frames:
-        return frames
+        return frames, "nb_frames"
     seconds = _number(video.get("duration")) or duration
-    return seconds * (parse_rate(video.get("avg_frame_rate")) or fps)
+    return seconds * (parse_rate(video.get("avg_frame_rate")) or fps), "duration × rate"
 
 
 def pass_timeout(duration: float | None) -> float:
@@ -191,19 +206,19 @@ def pass_timeout(duration: float | None) -> float:
     return max(60.0, 4.0 * (duration or 0.0))
 
 
-def _ffmpeg_filter(video: str, filter_name: str, filter_expr: str, timeout: float = 60.0) -> str:
+def _ffmpeg_filter(video: str, filter_name: str, filter_expr: str, timeout: float = 60.0, video_index: int = 0) -> str:
     if filter_name in {"silencedetect", "ebur128"}:
-        command = ["ffmpeg", "-hide_banner", "-nostats", "-i", video, "-af", filter_expr, "-vn", "-f", "null", "-"]
+        command = ["ffmpeg", "-hide_banner", "-nostats", "-i", video, "-map", "0:a:0", "-af", filter_expr, "-vn", "-f", "null", "-"]
     else:
-        command = ["ffmpeg", "-hide_banner", "-nostats", "-i", video, "-vf", filter_expr, "-an", "-f", "null", "-"]
+        command = ["ffmpeg", "-hide_banner", "-nostats", "-i", video, "-map", f"0:{video_index}", "-vf", filter_expr, "-an", "-f", "null", "-"]
     proc = _run(command, timeout=timeout)
     if proc.returncode:
         raise RuntimeError(f"{filter_name} ffmpeg failed: {(proc.stderr or proc.stdout).strip()[-500:]}")
     return proc.stderr
 
 
-def _jump_indices(video: str, timeout: float = 60.0) -> tuple[list[tuple[int, float]], int]:
-    command = ["ffmpeg", "-nostdin", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "info", "-nostats", "-i", video, "-vf", "scale=320:180,format=gray,showinfo=checksum=0", "-an", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tuple[list[tuple[int, float]], int]:
+    command = ["ffmpeg", "-nostdin", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "info", "-nostats", "-i", video, "-map", f"0:{video_index}", "-vf", "scale=320:180,format=gray,showinfo=checksum=0", "-an", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
     frame_size = 320 * 180
     error_file = tempfile.TemporaryFile()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error_file, bufsize=0)
@@ -272,14 +287,14 @@ def _jump_indices(video: str, timeout: float = 60.0) -> tuple[list[tuple[int, fl
     return jumps, len(diffs) + int(previous is not None)
 
 
-def _make_sheet(video: str, destination: str, duration: float, frames: int) -> list[float]:
+def _make_sheet(video: str, destination: str, duration: float, frames: int, video_index: int = 0) -> list[float]:
     count = max(1, frames)
     times = [i * duration / count for i in range(count)]
     with tempfile.TemporaryDirectory(prefix="qa-render-") as tmp:
         paths = []
         for index, timestamp in enumerate(times):
             target = Path(tmp) / f"frame-{index:02d}.jpg"
-            proc = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{timestamp:.3f}", "-i", video, "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "3", str(target)])
+            proc = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{timestamp:.3f}", "-i", video, "-map", f"0:{video_index}", "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "3", str(target)])
             if proc.returncode or not target.exists():
                 raise RuntimeError(f"contact sheet frame at {timestamp:.3f}s failed: {(proc.stderr or proc.stdout).strip()[-300:]}")
             paths.append(target)
@@ -306,10 +321,11 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if probe_proc.returncode:
             raise RuntimeError(f"ffprobe failed: {probe_proc.stderr.strip()[-500:]}")
         probe = json.loads(probe_proc.stdout)
-        findings.extend(parse_probe(probe))
-        video = next((stream for stream in probe.get("streams", []) if stream.get("codec_type") == "video"), None)
+        video = select_video_stream(probe)
+        findings.extend(parse_probe(probe, video))
         if video is None:
             return _result(args.video, None, findings), 1
+        video_index = int(video["index"])
         actual_size = (int(video.get("width", 0)), int(video.get("height", 0)))
         if args.expect_size:
             expected_size = tuple(int(part) for part in args.expect_size.lower().split("x", 1))
@@ -346,20 +362,21 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         limit = pass_timeout(duration)
         try:
             # video and audio only: phone files carry data tracks that ffmpeg cannot "decode"
-            decoded = _run(["ffmpeg", "-v", "error", "-i", args.video, "-map", "0:v", "-map", "0:a?", "-f", "null", "-"], timeout=limit)
-            if decoded.returncode or decoded.stderr:
-                detail = "\n".join(decoded.stderr.splitlines()[:3]) or f"ffmpeg exited {decoded.returncode}"
+            decoded = _run(["ffmpeg", "-v", "error", "-i", args.video, "-map", f"0:{video_index}", "-map", "0:a:0?", "-f", "null", "-"], timeout=limit)
+            errors = decode_error_lines(decoded.stderr)
+            if decoded.returncode or errors:
+                detail = "\n".join(errors[:3]) or f"ffmpeg exited {decoded.returncode}"
                 findings.append(Finding("FAIL", "decode", detail))
             else:
-                findings.append(Finding("PASS", "decode", "all streams decoded without errors"))
+                findings.append(Finding("PASS", "decode", "selected streams decoded without errors"))
         except (OSError, subprocess.TimeoutExpired) as exc:
             findings.append(Finding("FAIL", "decode", str(exc)))
 
-        black = parse_blackdetect(_ffmpeg_filter(args.video, "blackdetect", "blackdetect=d=0.1:pix_th=0.10", limit))
+        black = parse_blackdetect(_ffmpeg_filter(args.video, "blackdetect", "blackdetect=d=0.1:pix_th=0.10", limit, video_index))
         findings.extend(_finding_for_intervals("black", black, duration or 0))
         if not black:
             findings.append(Finding("PASS", "black", "no black intervals detected"))
-        frozen = parse_freezedetect(_ffmpeg_filter(args.video, "freezedetect", "freezedetect=n=-60dB:d=0.5", limit), duration or 0)
+        frozen = parse_freezedetect(_ffmpeg_filter(args.video, "freezedetect", "freezedetect=n=-60dB:d=0.5", limit, video_index), duration or 0)
         for start, end in frozen:
             findings.append(Finding("WARN", "freeze", f"possible freeze from {start:.3f}s to {end:.3f}s ({end-start:.3f}s)", start))
         if not frozen:
@@ -387,10 +404,13 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             else:
                 findings.append(Finding("WARN", "peak", "could not parse true peak"))
 
-        jumps, frame_count = _jump_indices(args.video, limit)
-        expected_frames = expected_frame_count(video, duration, actual_fps)
+        jumps, frame_count = _jump_indices(args.video, limit, video_index)
+        expected_frames, source = expected_frame_count(video, duration, actual_fps)
         if frame_count < 0.98 * expected_frames:
-            findings.append(Finding("FAIL", "frames", f"decoded {frame_count} of ~{expected_frames:g} expected frames"))
+            authoritative = source == "nb_frames"
+            note = "" if authoritative else "; expected count is an estimate (duration × rate)"
+            findings.append(Finding("FAIL" if authoritative else "WARN", "frames",
+                                    f"decoded {frame_count} of ~{expected_frames:g} expected frames{note}"))
         for frame_index, timestamp in jumps:
             level = "WARN" if args.mode == "clip" else "INFO"
             desc = "possible one-frame pop" if args.mode == "clip" else "cut"
@@ -401,7 +421,7 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if args.sheet:
             sheet_duration = _number(video.get("duration"))
             times = _make_sheet(args.video, args.sheet,
-                                sheet_duration if sheet_duration is not None else duration, args.sheet_frames)
+                                sheet_duration if sheet_duration is not None else duration, args.sheet_frames, video_index)
             findings.append(Finding("INFO", "sheet", f"contact sheet saved to {args.sheet}; frames at " + ", ".join(f"{t:.2f}s" for t in times)))
         return _result(args.video, probe, findings), int(any(f.level == "FAIL" for f in findings))
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, RuntimeError) as exc:

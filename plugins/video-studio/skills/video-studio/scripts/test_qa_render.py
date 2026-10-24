@@ -62,13 +62,13 @@ def test_jump_detection_uses_absolute_differences():
 
 def test_expected_frames_prefer_the_video_stream_over_the_container():
     # the stream's own frame count wins
-    assert qa.expected_frame_count({"nb_frames": "289"}, 99.0, 24) == 289
+    assert qa.expected_frame_count({"nb_frames": "289"}, 99.0, 24) == (289, "nb_frames")
     # a music bed longer than the picture must not inflate the expectation
-    assert qa.expected_frame_count({"duration": "12.0", "avg_frame_rate": "24/1"}, 15.0, 24) == pytest.approx(288)
+    assert qa.expected_frame_count({"duration": "12.0", "avg_frame_rate": "24/1"}, 15.0, 24) == (pytest.approx(288), "duration × rate")
     # variable-rate phone footage: the average rate, not r_frame_rate
-    assert qa.expected_frame_count({"duration": "10.0", "avg_frame_rate": "2950/100"}, 10.0, 30) == pytest.approx(295)
+    assert qa.expected_frame_count({"duration": "10.0", "avg_frame_rate": "2950/100"}, 10.0, 30) == (pytest.approx(295), "duration × rate")
     # nothing in the stream: container duration × nominal rate
-    assert qa.expected_frame_count({}, 2.0, 24) == pytest.approx(48)
+    assert qa.expected_frame_count({}, 2.0, 24) == (pytest.approx(48), "duration × rate")
 
 
 def test_pass_timeout_grows_with_duration():
@@ -247,3 +247,99 @@ def test_variable_rate_jump_uses_presentation_time(tmp_path):
     assert len(findings) == 1
     assert findings[0]["t"] == pytest.approx(2, abs=.05)
     assert "frame 30 (2.000s)" in findings[0]["message"]
+
+
+@pytest.mark.parametrize("noise", [
+    "[null] Application provided invalid, non monotonically increasing dts to muxer: 2 >= 2",
+    "[vost] Non-monotonic DTS; previous: 2, current: 2",
+    "Non-Monotonically increasing PTS in output stream",
+])
+def test_decode_error_filter_retains_real_errors(noise):
+    error = "[h264] Invalid NAL unit size"
+    assert qa.decode_error_lines(noise + "\n" + error) == [error]
+    assert qa.decode_error_lines(error) == [error]
+    assert qa.decode_error_lines("unrelated muxer error") == ["unrelated muxer error"]
+
+
+def test_select_video_stream_skips_cover_art():
+    cover = {"index": 0, "codec_type": "video", "disposition": {"attached_pic": 1}}
+    audio = {"index": 1, "codec_type": "audio"}
+    video = {"index": 2, "codec_type": "video", "r_frame_rate": "24/1"}
+    default = {"index": 3, "codec_type": "video", "disposition": {"default": 1}}
+    probe = {"streams": [cover, audio, video, default]}
+    assert qa.select_video_stream(probe) is video
+    assert qa.select_video_stream({"streams": [cover, audio]}) is None
+    assert any(f.check == "probe" and "index=2" in f.message for f in qa.parse_probe(probe))
+
+
+@pytest.mark.parametrize("rates", [(30, 15), (15, 30)])
+def test_vfr_matroska_does_not_fail_decode_or_estimated_frames(tmp_path, rates):
+    video = tmp_path / "vfr.mkv"
+    graph = (f"testsrc2=s=320x240:r=30:d=1.5,select=not(mod(n\\,{30 // rates[0]}))[a];"
+             f"testsrc2=s=320x240:r=30:d=1.5,select=not(mod(n\\,{30 // rates[1]}))[b];"
+             "[a][b]concat=n=2:v=1:a=0[out]")
+    made = subprocess.run(["ffmpeg", "-nostdin", "-y", "-v", "error",
+                           "-filter_threads", "1", "-f", "lavfi", "-i", graph,
+                           "-t", "3", "-fps_mode", "passthrough", "-c:v", "libx264",
+                           "-threads", "1", "-pix_fmt", "yuv420p", str(video)],
+                          capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--json"],
+                          capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = result_json(proc)
+    assert not any(f["level"] == "FAIL" and f["check"] in {"decode", "frames"}
+                   for f in data["findings"])
+    stream = qa.select_video_stream(data["probe"])
+    assert "nb_frames" not in stream
+    assert any(f["level"] == "WARN" and f["check"] == "frames"
+               and "expected count is an estimate" in f["message"] for f in data["findings"])
+
+
+def test_two_video_tracks_analyse_first_even_when_second_is_default(tmp_path, monkeypatch):
+    video = tmp_path / "two-tracks.mp4"
+    sheet = tmp_path / "two-tracks.jpg"
+    made = subprocess.run(["ffmpeg", "-nostdin", "-y", "-v", "error",
+                           "-filter_threads", "1", "-f", "lavfi", "-i",
+                           "testsrc2=s=320x240:r=24:d=2", "-f", "lavfi", "-i",
+                           "color=c=blue:s=320x240:r=12:d=2", "-f", "lavfi", "-i",
+                           "sine=frequency=440:duration=2", "-map", "2:a", "-map", "0:v", "-map", "1:v",
+                           "-c:v", "libx264", "-threads", "1", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                           "-disposition:v:1", "default", "-disposition:v:0", "0", str(video)],
+                          capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = run_cli(video, "--sheet", str(sheet), "--sheet-frames", "2")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = result_json(proc)
+    streams = [s for s in data["probe"]["streams"] if s["codec_type"] == "video"]
+    assert [int(s["nb_frames"]) for s in streams] == [48, 24]
+    assert streams[1]["disposition"]["default"] == 1
+    selected = qa.select_video_stream(data["probe"])
+    assert selected is streams[0]
+    assert selected["index"] == 1  # absolute index, not the ordinal video index
+    assert qa._jump_indices(str(video), video_index=selected["index"])[1] == 48
+    assert not any(f["check"] == "frames" and f["level"] == "FAIL" for f in data["findings"])
+    assert any(f["check"] == "probe" and "index=1" in f["message"] for f in data["findings"])
+    assert any(f["check"] == "freeze" and f["level"] == "PASS" for f in data["findings"])
+    assert sheet.is_file() and sheet.stat().st_size > 0
+
+    # Record the real commands to cover every pass, including each sheet extraction.
+    commands = []
+    original_run = qa._run
+
+    def record(command, *args, **kwargs):
+        commands.append(command)
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(qa, "_run", record)
+    assert qa.main([str(video), "--sheet", str(sheet), "--sheet-frames", "2", "--json"]) == 0
+    source_commands = [c for c in commands if c[0] == "ffmpeg" and str(video) in c]
+    assert len(source_commands) == 7  # decode, black, freeze, silence, loudness, two images
+    for command in source_commands:
+        maps = [command[i + 1] for i, arg in enumerate(command) if arg == "-map"]
+        if "-af" in command:
+            assert maps == ["0:a:0"]
+        elif "-v" in command:
+            assert maps == ["0:1", "0:a:0?"]
+        else:
+            assert maps == ["0:1"]
