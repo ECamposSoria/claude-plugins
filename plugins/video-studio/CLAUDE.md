@@ -11,7 +11,7 @@ instructions plus three small scripts, not an engine.
 | animation-hyperframes | the `hyperframes:*` skills, `npx hyperframes` | Pasted web content, GSAP/Lottie/Three.js timelines, stories from photos, captions-first social cuts |
 | footage-edit | `faster-whisper` (venv) + `ffmpeg` | A real recording to cut, trim or tighten |
 | ai-footage | clips from the `nano-banana-multi:image-gen` skill (fal), repaired and assembled here | Footage nobody filmed; repairing pops, rewritten lettering, invented clothing marks |
-| audio (shared) | ElevenLabs, VoiceStudio (local Docker, voice cloning), Hyperframes `media-use`, ffmpeg `loudnorm` | Voiceover, music, captions, −14 LUFS |
+| audio (shared) | VoiceStudio on the laptop GPU via the always-on tunnel (default), ElevenLabs, VoiceStudio on the VM CPU, Hyperframes `media-use`, ffmpeg `loudnorm` | Voiceover, music, captions, −14 LUFS |
 
 **Hybrid** = a base (footage or AI clips) + animation overlays, joined with `scripts/composite.sh`.
 

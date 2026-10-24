@@ -18,7 +18,7 @@ replace the music or re-voice a line without re-rendering.
 |---|---|---|---|
 | ElevenLabs TTS | pay-as-you-go: 10,000 characters per cycle (checked 2026-10-24) | **No: instant cloning is not enabled on this plan** | Best Spanish quality. Key in `~/.secrets/elevenlabs.env` as `ELEVENLABS_API_KEY`. Check quota first: `GET https://api.elevenlabs.io/v1/user/subscription` (`character_count`/`character_limit`). 🔴 `promo-video` reads `ELEVEN_LABS_API_KEY`: `export ELEVEN_LABS_API_KEY="$ELEVENLABS_API_KEY"` first. |
 | Hyperframes `media-use` voice | free | No | Local **Kokoro** with `--local-only` (runs on this VM), or HeyGen's free path (a cloud service; needs the `heygen` CLI signed in, not installed). Check Kokoro has a voice for the language first. |
-| VoiceStudio (debpalash/VoiceStudio 0.5.6, AGPL) | free, local | **Yes** | Installed in Docker (below). **Slow on this CPU-only VM: a 30 s voiceover takes ~9 min.** The only way to a natural Argentine voice: clone a consenting native speaker. |
+| VoiceStudio (debpalash/VoiceStudio 0.5.6, AGPL) | free, local | **Yes** | **On the laptop's GPU: a 30 s voiceover in ~7 s** (faster than ElevenLabs); on the VM's CPU when the laptop is off: ~9 min. The only way to a natural Argentine voice: clone a consenting native speaker. |
 | The user records it | free | it is their voice | Often the best option: transcribe it with `transcribe.py` and cut it like footage. |
 
 🔴 Clone a voice only with the explicit permission of the person whose voice it is. VoiceStudio does **not**
@@ -26,18 +26,40 @@ enforce this: its API generates with a profile that has no consent recorded. Rec
 
 **Which one** (measured 2026-10-24 on the same 446-character Spanish script):
 
-| | ElevenLabs (Matilda, multilingual v2) | VoiceStudio (OmniVoice, CPU) |
-|---|---|---|
-| Time for ~30 s of audio | **9 s** | **~9 min** in sentence chunks (13 min as one block) |
-| Intelligibility (Whisper word error rate) | 1.4 % | 1.4 % |
-| Accent | foreign (premade voices are not native Spanish speakers) | foreign with the built-in voices; **native only when cloning a native speaker** |
-| Cloning | not on our plan | yes, 3–20 s of clean reference |
-| Cost | 10,000 characters a month included (~20 voiceovers of 30 s); the plan cannot be extended | free |
+| | ElevenLabs (Matilda, multilingual v2) | VoiceStudio on the laptop GPU (RTX 4070) | VoiceStudio on the VM CPU |
+|---|---|---|---|
+| Time for ~30 s of audio | 9 s | **7 s** (first call after start ~80 s: model load) | ~9 min in sentence chunks, 13 min as one block |
+| Intelligibility (Whisper word error rate) | 1.4 % | 1.4 % | 1.4 % |
+| Accent | foreign (premade voices are not native Spanish speakers) | foreign with the built-in voices; **native only when cloning a native speaker** | same |
+| Cloning | not on our plan | yes, 3–20 s of clean reference | yes |
+| Cost | 10,000 characters a month included (~20 voiceovers of 30 s); cannot be extended | free | free |
 
-Use ElevenLabs for quick drafts and anything iterated many times. Use VoiceStudio when the piece needs a specific
-real voice (cloned, with consent), or when the month's ElevenLabs characters are spent, and run it in the background.
+**Default: VoiceStudio on the laptop GPU** whenever the laptop is on: it is free, faster than ElevenLabs, and the
+only route to a cloned voice. ElevenLabs when the laptop is off or asleep and the piece is needed now. The VM's CPU
+copy only for a cloned voice with the laptop off, in the background.
 
-### VoiceStudio: how to run it
+### VoiceStudio on the laptop GPU (default)
+
+The VM keeps an always-on SSH tunnel to the laptop (`host-gpu-tunnel.service`, see
+`~/projects/uniteapp/memory/platform/host-gpu-tunnel.md`), so the laptop's VoiceStudio answers at
+`http://127.0.0.1:13900`. The container itself is started on demand inside the laptop's WSL Docker:
+
+```bash
+L='ssh -o BatchMode=yes lenovo-nat'                  # laptop over the fixed VMware NAT address
+# 🔴 the GPU is shared with other sessions (Fenorium runs 6 GB models on it): check it is free first
+$L 'wsl -- bash -lc "nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader; docker ps --format {{.Names}}"'
+$L 'wsl -- bash -lc "docker compose -p voicestudio -f ~/voicestudio/docker-compose.yml up -d --wait --wait-timeout 300"'
+U=http://127.0.0.1:13900                              # every curl below works the same with $U in place of :3900
+# ... generate / clone / consent exactly as in the CPU section, against $U ...
+$L 'wsl -- bash -lc "docker compose -p voicestudio -f ~/voicestudio/docker-compose.yml down"'   # free the GPU
+```
+
+- On the GPU send the whole script as one block (6.8 s for the test script; sentence chunks took 10 s).
+- Voices cloned on the laptop live in the laptop's `voicestudio-data` volume, not the VM's: clone where you render.
+- No answer on 13900 means the laptop is off, asleep, or WSL Docker is not up: `systemctl --user status
+  host-gpu-tunnel` on the VM, then fall back to ElevenLabs or the CPU copy.
+
+### VoiceStudio on the VM CPU (fallback): how to run it
 
 ```bash
 C="$SKILL/setup/voicestudio/docker-compose.yml"

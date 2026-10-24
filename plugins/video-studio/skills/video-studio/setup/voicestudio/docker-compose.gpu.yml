@@ -1,0 +1,39 @@
+# VoiceStudio on the laptop's GPU (RTX 4070 Laptop, 8 GB) inside its WSL2 Docker. Same image and API as the VM's
+# CPU copy; the VM reaches it through the always-on tunnel at http://127.0.0.1:13900 (host-gpu-tunnel.service).
+# Lives on the laptop at ~/voicestudio/docker-compose.yml (WSL user eze); key at ~/.secrets/voicestudio.env there.
+# From the VM:
+#   ssh lenovo-nat 'wsl -- bash -lc "docker compose -p voicestudio -f ~/voicestudio/docker-compose.yml up -d --wait --wait-timeout 300"'
+#   ssh lenovo-nat 'wsl -- bash -lc "docker compose -p voicestudio -f ~/voicestudio/docker-compose.yml down"'
+services:
+  voicestudio:
+    image: ghcr.io/debpalash/omnivoice-studio:0.5.6
+    container_name: voicestudio
+    ports:
+      - "127.0.0.1:3900:3900"          # loopback only; Windows reaches it through WSL's localhost forwarding
+    env_file:
+      - ${HOME}/.secrets/voicestudio.env
+    environment:
+      OMNIVOICE_SERVER_MODE: "1"
+      OMNIVOICE_BIND_HOST: "0.0.0.0"
+      OMNIVOICE_DATA_DIR: /app/omnivoice_data
+      HF_HOME: /app/omnivoice_data/huggingface
+      PYTHONUNBUFFERED: "1"
+      OMNIVOICE_DEVICE: cuda               # the default OmniVoice engine wants >= 6 GB of VRAM; the 4070 has 8
+      OMNIVOICE_TTS_BACKEND: omnivoice
+      OMNIVOICE_MCP_OUTPUT_MODE: files
+    gpus: all
+    volumes:
+      - voicestudio-data:/app/omnivoice_data
+    mem_limit: 12g                          # WSL has ~31 GB of the laptop's 64 GB
+    cpus: 8
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3900/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    restart: "no"                           # on demand; the laptop is a workstation, not a server
+
+volumes:
+  voicestudio-data:
+    name: voicestudio-data
