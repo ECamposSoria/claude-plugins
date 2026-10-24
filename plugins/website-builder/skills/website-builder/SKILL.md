@@ -353,11 +353,14 @@ Two different jobs. Gate both behind explicit 3D intent.
    options and prices.
 2. **Check it against the photos.** Generators invent the hidden sides and smear printed labels. The client
    approves the model before it ships.
-3. **Optimise it.** `npx @gltf-transform/cli optimize in.glb out.glb --compress meshopt --texture-compress webp`
+3. **Optimise it.** `npx @gltf-transform/cli optimize in.glb out.glb --compress draco --texture-compress webp`
    (CLI 4.5). Aim for ≤ 3 MB; add `--simplify true --simplify-ratio 0.5` if it is still heavy.
+   🔴 Use **Draco** for `<model-viewer>`: it loads the Draco decoder from Google's CDN by default, but Meshopt
+   decoding is off unless you set `ModelViewerElement.meshoptDecoderLocation` before any model loads, so a
+   Meshopt GLB (the CLI's default `--compress`) simply fails to show. R3F's `useGLTF` decodes both.
 4. **Show it** with `<model-viewer>` (`@google/model-viewer` 4.4, a web component: no React or Three.js code):
    `camera-controls`, `auto-rotate`, a `poster` image for first paint, `loading="lazy"` below the fold, `ar`
-   for phones.
+   for phones. Open the page once and confirm the model renders before calling it done.
 
 **An immersive scene or hero**: React Three Fiber (`@react-three/fiber` + `drei`, `useGLTF` to load models)
 or **Spline** for no-code scenes, only when it genuinely earns the bundle and the frame budget.

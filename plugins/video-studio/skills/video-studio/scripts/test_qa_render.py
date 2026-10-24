@@ -369,3 +369,33 @@ def test_short_silent_audio_track_fails_and_is_flagged(tmp_path):
     findings = result_json(proc)["findings"]
     assert any(f["check"] == "silence" and f["level"] == "FAIL" for f in findings)
     assert any(f["check"] == "audio" and f["level"] == "WARN" and "audio ends at" in f["message"] for f in findings)
+
+
+def test_display_size_applies_rotation_metadata():
+    assert qa.display_size({"width": 320, "height": 240}) == (320, 240)
+    assert qa.display_size({"width": 320, "height": 240, "side_data_list": [{"rotation": -90}]}) == (240, 320)
+    assert qa.display_size({"width": 320, "height": 240, "side_data_list": [{"rotation": 180}]}) == (320, 240)
+    assert qa.display_size({"width": 320, "height": 240, "tags": {"rotate": "270"}}) == (240, 320)
+
+
+def test_rotated_portrait_video_passes_expected_display_size(tmp_path):
+    plain = tmp_path / "landscape.mp4"
+    rotated = tmp_path / "portrait.mp4"
+    make_video(plain, "color=c=green:s=320x240:r=24:d=2", 2, audio=False)
+    made = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-display_rotation", "90",
+                           "-i", str(plain), "-c", "copy", str(rotated)],
+                          capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(rotated), "--expect-size", "240x320", "--json"],
+                          capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_contact_sheet_on_a_five_frame_clip(tmp_path):
+    video = tmp_path / "five-frames.mp4"
+    make_video(video, "color=c=green:s=320x240:r=24:d=0.2083", 0.2083, audio=False)
+    sheet = tmp_path / "five-frames.jpg"
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--sheet", str(sheet), "--json"],
+                          capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert sheet.is_file()

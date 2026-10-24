@@ -188,6 +188,20 @@ def _run(command: list[str], timeout: float = 45) -> subprocess.CompletedProcess
     return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
 
 
+def display_size(video: dict[str, Any]) -> tuple[int, int]:
+    """Width and height as displayed: phones store portrait video as landscape plus a 90° rotation."""
+    width, height = int(video.get("width", 0)), int(video.get("height", 0))
+    rotation = None
+    for side in video.get("side_data_list") or []:
+        if "rotation" in side:
+            rotation = _number(side["rotation"])
+    if rotation is None:
+        rotation = _number((video.get("tags") or {}).get("rotate"))
+    if rotation is not None and round(abs(rotation)) % 180 == 90:
+        return height, width
+    return width, height
+
+
 def expected_frame_count(video: dict[str, Any], duration: float, fps: float) -> tuple[float, str]:
     """Frames the video stream should decode to: its own header count, else its own duration × average rate.
 
@@ -300,7 +314,7 @@ def _make_sheet(video: str, destination: str, duration: float, frames: int, vide
         paths = []
         for index, timestamp in enumerate(times):
             target = Path(tmp) / f"frame-{index:02d}.jpg"
-            proc = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{timestamp:.3f}", "-i", video, "-map", f"0:{video_index}", "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "3", str(target)])
+            proc = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{math.floor(timestamp * 1000) / 1000:.3f}", "-i", video, "-map", f"0:{video_index}", "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "3", str(target)])
             if proc.returncode or not target.exists():
                 raise RuntimeError(f"contact sheet frame at {timestamp:.3f}s failed: {(proc.stderr or proc.stdout).strip()[-300:]}")
             paths.append(target)
@@ -332,7 +346,7 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if video is None:
             return _result(args.video, None, findings), 1
         video_index = int(video["index"])
-        actual_size = (int(video.get("width", 0)), int(video.get("height", 0)))
+        actual_size = display_size(video)
         if args.expect_size:
             expected_size = tuple(int(part) for part in args.expect_size.lower().split("x", 1))
             if actual_size != expected_size:
