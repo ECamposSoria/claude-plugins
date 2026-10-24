@@ -166,7 +166,10 @@ def parse_ebur128(stderr: str) -> tuple[float | None, float | None]:
 
 
 def stream_duration(stream: dict[str, Any] | None) -> float | None:
-    """A stream's own length: its duration field, else the Matroska DURATION tag (HH:MM:SS.fff)."""
+    """A stream's own length: its duration field, else the Matroska DURATION tag (HH:MM:SS.fff).
+
+    ffmpeg's Matroska muxer writes the tag as the stream's END time, so a stream that starts at 2 s
+    and lasts 2 s carries DURATION=4; the start is subtracted to get the length."""
     if not stream:
         return None
     seconds = _number(stream.get("duration"))
@@ -176,7 +179,9 @@ def stream_duration(stream: dict[str, Any] | None) -> float | None:
         if key.upper().startswith("DURATION"):
             match = re.fullmatch(r"(\d+):(\d+):(\d+(?:\.\d+)?)", str(value).strip())
             if match:
-                return int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+                end = int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+                start = _number(stream.get("start_time")) or 0.0
+                return end - start if end > start else end
     return None
 
 

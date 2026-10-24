@@ -53,6 +53,9 @@ uv run "$SKILL/scripts/qa_render.py" final.mp4 --expect-size 1080x1920 --expect-
 - `--mode clip` for a single generated shot (any frame jump is a pop); `--mode edit` for a cut piece (jumps
   are cuts).
 - Read the contact sheet with the Read tool and look at it. Fix every FAIL; explain or fix every WARN.
+- The checks are measurements, not proof. If a FAIL contradicts what the frames and `ffprobe` show on unusual
+  media (an exotic container, timestamp offsets, odd edit lists), say which check and why it is wrong, and
+  deliver with that note instead of forcing a re-encode.
 - Then deliver: copy to `/mnt/hgfs/vm-share/videos/<project>/` (the owner watches from Windows) and state the
   exact path. Keep drafts in a `borradores/` subfolder so the final is unambiguous.
 

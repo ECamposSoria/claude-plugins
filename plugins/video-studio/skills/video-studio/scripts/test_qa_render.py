@@ -504,3 +504,17 @@ def test_delayed_audio_ending_with_the_picture_is_not_flagged(tmp_path):
     assert float(audio["start_time"]) == pytest.approx(2, abs=.1)   # the fixture really is delayed
     proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--json"], capture_output=True, text=True, timeout=15)
     assert not any(f["check"] == "audio" and "audio ends at" in f["message"] for f in result_json(proc)["findings"])
+
+
+def test_matroska_with_a_timestamp_offset_passes(tmp_path):
+    video = tmp_path / "offset.mkv"
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+                           "-f", "lavfi", "-i", "testsrc=s=320x240:r=24:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                           "-output_ts_offset", "2", str(video)], capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    stream = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(video)],
+                                       capture_output=True, text=True).stdout)["streams"][0]
+    assert float(stream["start_time"]) == pytest.approx(2, abs=.05)   # the fixture really is offset
+    assert qa.stream_duration(stream) == pytest.approx(2, abs=.05)
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--json"], capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout
