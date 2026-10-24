@@ -12,6 +12,8 @@ State of this VM, verified 2026-10-24. Check before reinstalling anything.
 | `unzip` | installed (without it Hyperframes falls back to snap Chromium and hangs) | `which unzip` |
 | ElevenLabs key | `~/.secrets/elevenlabs.env` as `ELEVENLABS_API_KEY` | never print it |
 | fal key | `~/.secrets/fal.env`, used through the `nano-banana-multi:image-gen` skill | never print it |
+| VoiceStudio 0.5.6 | Docker image `ghcr.io/debpalash/omnivoice-studio:0.5.6` (17 GB), volume `voicestudio-data` with the OmniVoice model (3.3 GB); started on demand from `voicestudio/docker-compose.yml` | `docker compose -p voicestudio -f voicestudio/docker-compose.yml up -d`, then `curl -fsS 127.0.0.1:3900/health` |
+| VoiceStudio key | `~/.secrets/voicestudio.env` as `OMNIVOICE_API_KEY` | never print it |
 
 ## Rebuilding the transcription venv (a fresh VM only)
 
@@ -40,7 +42,14 @@ If `render` hangs with no output, point it at its own headless shell (see
 export HYPERFRAMES_BROWSER_PATH=$(ls -d ~/.cache/hyperframes/chrome/chrome-headless-shell/*/chrome-headless-shell-linux64)/chrome-headless-shell
 ```
 
+## VoiceStudio notes
+
+- The CPU-tuned GGUF engine is not usable in Docker: its native binary ships only in upstream's desktop
+  installers, so the compose file pins the default OmniVoice engine on CPU.
+- It runs as root inside the container (upstream image design); nothing on the host is bind-mounted, so it
+  never writes root-owned files into your home. Audio goes in and out over the HTTP API.
+- Update by changing the pinned tag after reading the release notes; `:latest` is a rolling preview of `main`.
+
 ## Not installed, on purpose
 
-VoiceStudio (local voice cloning) and the `heygen` CLI (Hyperframes' free TTS path) are not installed. See
-[../legs/audio.md](../legs/audio.md) before adding either.
+The `heygen` CLI (Hyperframes' free TTS path). See [../legs/audio.md](../legs/audio.md) before adding it.

@@ -1,0 +1,41 @@
+# VoiceStudio (debpalash/VoiceStudio, AGPL-3.0): local voice cloning and TTS for the audio leg.
+# Start on demand, stop when done (it holds the model in RAM while up):
+#   docker compose -p voicestudio -f <this file> up -d
+#   docker compose -p voicestudio -f <this file> down        # the data volume (voices, models) is kept
+# Admin key: ~/.secrets/voicestudio.env (OMNIVOICE_API_KEY=...). Never print it.
+services:
+  voicestudio:
+    # 0.5.6 = upstream "stable" on 2026-10-24. Pin a release, never :latest (a rolling preview of main).
+    image: ghcr.io/debpalash/omnivoice-studio:0.5.6
+    container_name: voicestudio
+    ports:
+      - "127.0.0.1:3900:3900"          # loopback only: the API can clone voices
+    env_file:
+      - ${HOME}/.secrets/voicestudio.env
+    environment:
+      OMNIVOICE_SERVER_MODE: "1"
+      OMNIVOICE_BIND_HOST: "0.0.0.0"
+      OMNIVOICE_DATA_DIR: /app/omnivoice_data
+      HF_HOME: /app/omnivoice_data/huggingface
+      PYTHONUNBUFFERED: "1"
+      # This VM has no GPU. The CPU-tuned GGUF engine needs a native binary that upstream ships only in its
+      # desktop installers, not in this image, so the default OmniVoice engine (PyTorch, 2.4 GB weights) runs on CPU.
+      OMNIVOICE_DEVICE: cpu
+      OMNIVOICE_TTS_BACKEND: omnivoice
+      OMNIVOICE_CPU_GENERATE_TIMEOUT_S: "900"
+      OMNIVOICE_MCP_OUTPUT_MODE: files     # renders come back as URLs, not base64 in the agent's context
+    volumes:
+      - voicestudio-data:/app/omnivoice_data   # voices, prompt cache and model weights (~2.4 GB on first run)
+    mem_limit: 5g                           # Docker's slice is 6 GB high / 8 GB max on this VM
+    cpus: 8
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3900/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    restart: "no"                           # on demand only; it is not part of any running stack
+
+volumes:
+  voicestudio-data:
+    name: voicestudio-data

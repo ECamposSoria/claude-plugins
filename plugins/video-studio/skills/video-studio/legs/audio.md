@@ -18,10 +18,51 @@ replace the music or re-voice a line without re-rendering.
 |---|---|---|---|
 | ElevenLabs TTS | pay-as-you-go: 10,000 characters per cycle (checked 2026-10-24) | **No: instant cloning is not enabled on this plan** | Best Spanish quality. Key in `~/.secrets/elevenlabs.env` as `ELEVENLABS_API_KEY`. Check quota first: `GET https://api.elevenlabs.io/v1/user/subscription` (`character_count`/`character_limit`). 🔴 `promo-video` reads `ELEVEN_LABS_API_KEY`: `export ELEVEN_LABS_API_KEY="$ELEVENLABS_API_KEY"` first. |
 | Hyperframes `media-use` voice | free | No | Local **Kokoro** with `--local-only` (runs on this VM), or HeyGen's free path (a cloud service; needs the `heygen` CLI signed in, not installed). Check Kokoro has a voice for the language first. |
-| VoiceStudio (debpalash/VoiceStudio, AGPL) | free, local | **Yes** | **Not installed.** The only free cloning option found. CPU-only here (no GPU) so slow, ~5 GB. Install through its Docker guide, never its `curl ... \| sh`. |
+| VoiceStudio (debpalash/VoiceStudio 0.5.6, AGPL) | free, local | **Yes** | Installed in Docker (below). **Slow on this CPU-only VM: a 30 s voiceover takes ~9 min.** The only way to a natural Argentine voice: clone a consenting native speaker. |
 | The user records it | free | it is their voice | Often the best option: transcribe it with `transcribe.py` and cut it like footage. |
 
-🔴 Clone a voice only with the explicit permission of the person whose voice it is.
+🔴 Clone a voice only with the explicit permission of the person whose voice it is. VoiceStudio does **not**
+enforce this: its API generates with a profile that has no consent recorded. Record consent anyway (below).
+
+**Which one** (measured 2026-10-24 on the same 446-character Spanish script):
+
+| | ElevenLabs (Matilda, multilingual v2) | VoiceStudio (OmniVoice, CPU) |
+|---|---|---|
+| Time for ~30 s of audio | **9 s** | **~9 min** in sentence chunks (13 min as one block) |
+| Intelligibility (Whisper word error rate) | 1.4 % | 1.4 % |
+| Accent | foreign (premade voices are not native Spanish speakers) | foreign with the built-in voices; **native only when cloning a native speaker** |
+| Cloning | not on our plan | yes, 3–20 s of clean reference |
+| Cost | 10,000 characters a month included (~20 voiceovers of 30 s); the plan cannot be extended | free |
+
+Use ElevenLabs for quick drafts and anything iterated many times. Use VoiceStudio when the piece needs a specific
+real voice (cloned, with consent), or when the month's ElevenLabs characters are spent, and run it in the background.
+
+### VoiceStudio: how to run it
+
+```bash
+C="$SKILL/setup/voicestudio/docker-compose.yml"
+docker compose -p voicestudio -f "$C" up -d          # healthy in ~10 s; model loads on first render (~20 s)
+set -a; . ~/.secrets/voicestudio.env; set +a        # OMNIVOICE_API_KEY, never print it
+H="Authorization: Bearer $OMNIVOICE_API_KEY"
+
+# speech (run with run_in_background: ~11-19x slower than realtime); add -F profile_id=<id> for a cloned voice
+curl -s -H "$H" -F "text=$(cat script.txt)" -F language=es -F max_chunk_chars=140 \
+     -o voice.wav --max-time 1800 http://127.0.0.1:3900/generate
+
+# clone a voice: 3-20 s of clean speech plus its exact transcript (transcribe it with transcribe.py)
+curl -s -H "$H" -F name="<person>" -F kind=clone -F language=es -F "ref_text=<transcript>" \
+     -F ref_audio=@reference.wav http://127.0.0.1:3900/profiles          # -> {"id": "<profile id>", ...}
+# consent: the person reads a consent statement; store both with the profile
+curl -s -H "$H" -F consent_text="<what they read>" -F consent_audio=@consent.wav \
+     http://127.0.0.1:3900/profiles/<id>/consent
+
+docker compose -p voicestudio -f "$C" down            # when done; voices and the model stay in the volume
+```
+
+Output is 24 kHz mono WAV. Peak memory was 3.4 GB of the container's 5 GB cap. `max_chunk_chars=140` renders the
+script sentence by sentence, which is ~1.5x faster than one long block; the default step count is already the
+fastest (raising `num_step` only slows it). Other routes: `GET /profiles`, `DELETE /profiles/<id>`,
+`/v1/audio/speech` (OpenAI-compatible), and an MCP server at `http://127.0.0.1:3900/mcp/`.
 
 ## Music
 
