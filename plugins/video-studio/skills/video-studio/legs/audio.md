@@ -41,19 +41,20 @@ real voice (cloned, with consent), or when the month's ElevenLabs characters are
 
 ```bash
 C="$SKILL/setup/voicestudio/docker-compose.yml"
-docker compose -p voicestudio -f "$C" up -d          # healthy in ~10 s; model loads on first render (~20 s)
+# --wait returns only once the healthcheck passes (~10 s); without it the first request can hit a 503
+docker compose -p voicestudio -f "$C" up -d --wait --wait-timeout 300
 set -a; . ~/.secrets/voicestudio.env; set +a        # OMNIVOICE_API_KEY, never print it
 H="Authorization: Bearer $OMNIVOICE_API_KEY"
 
 # speech (run with run_in_background: ~11-19x slower than realtime); add -F profile_id=<id> for a cloned voice
-curl -s -H "$H" -F "text=$(cat script.txt)" -F language=es -F max_chunk_chars=140 \
-     -o voice.wav --max-time 1800 http://127.0.0.1:3900/generate
+curl -fsS -H "$H" -F "text=$(cat script.txt)" -F language=es -F max_chunk_chars=140 \
+     -o voice.wav --max-time 1800 http://127.0.0.1:3900/generate && file voice.wav   # -f: an error never lands in voice.wav
 
 # clone a voice: 3-20 s of clean speech plus its exact transcript (transcribe it with transcribe.py)
-curl -s -H "$H" -F name="<person>" -F kind=clone -F language=es -F "ref_text=<transcript>" \
+curl -fsS -H "$H" -F name="<person>" -F kind=clone -F language=es -F "ref_text=<transcript>" \
      -F ref_audio=@reference.wav http://127.0.0.1:3900/profiles          # -> {"id": "<profile id>", ...}
 # consent: the person reads a consent statement; store both with the profile
-curl -s -H "$H" -F consent_text="<what they read>" -F consent_audio=@consent.wav \
+curl -fsS -H "$H" -F consent_text="<what they read>" -F consent_audio=@consent.wav \
      http://127.0.0.1:3900/profiles/<id>/consent
 
 docker compose -p voicestudio -f "$C" down            # when done; voices and the model stay in the volume

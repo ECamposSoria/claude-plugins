@@ -12,7 +12,7 @@ State of this VM, verified 2026-10-24. Check before reinstalling anything.
 | `unzip` | installed (without it Hyperframes falls back to snap Chromium and hangs) | `which unzip` |
 | ElevenLabs key | `~/.secrets/elevenlabs.env` as `ELEVENLABS_API_KEY` | never print it |
 | fal key | `~/.secrets/fal.env`, used through the `nano-banana-multi:image-gen` skill | never print it |
-| VoiceStudio 0.5.6 | Docker image `ghcr.io/debpalash/omnivoice-studio:0.5.6` (17 GB), volume `voicestudio-data` with the OmniVoice model (3.3 GB); started on demand from `voicestudio/docker-compose.yml` | `docker compose -p voicestudio -f voicestudio/docker-compose.yml up -d`, then `curl -fsS 127.0.0.1:3900/health` |
+| VoiceStudio 0.5.6 | Docker image `ghcr.io/debpalash/omnivoice-studio:0.5.6` (17 GB), volume `voicestudio-data` with the OmniVoice model (3.3 GB); started on demand from `voicestudio/docker-compose.yml` | `docker compose -p voicestudio -f voicestudio/docker-compose.yml up -d --wait --wait-timeout 300` (returns once healthy) |
 | VoiceStudio key | `~/.secrets/voicestudio.env` as `OMNIVOICE_API_KEY` | never print it |
 
 ## Rebuilding the transcription venv (a fresh VM only)
