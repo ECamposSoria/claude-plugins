@@ -1,56 +1,84 @@
 ---
 name: video-studio
-description: Make or edit any video by routing to the right tool — promo animation (Remotion via promo-video, or Hyperframes for GSAP/HTML), self-hosted footage editing (faster-whisper transcript + ffmpeg), or a hybrid of both with compositing. Use when the user wants to create, generate, cut, trim, edit, or assemble a video. Invoke with /video.
-allowed-tools: Bash(npm:*), Bash(npx:*), Bash(ffmpeg:*), Bash(ffprobe:*), Bash(python3:*), Bash(git:*), Bash(ls:*), Bash(cp:*), Bash(mkdir:*), Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill
+description: Use when the user wants a video made, edited or finished — cutting or tightening a recording, assembling AI-generated clips into a reel, promo or explainer animation, captions or subtitles, a voiceover or music bed, dubbing, repairing a generated clip that pops or mangles lettering, or "make one like this" from a pasted reel or YouTube link. Invoke with /video. Generating the clips or images themselves belongs to image-gen.
+allowed-tools: Bash(npm:*), Bash(npx:*), Bash(ffmpeg:*), Bash(ffprobe:*), Bash(python3:*), Bash(uv:*), Bash(git:*), Bash(ls:*), Bash(cp:*), Bash(mkdir:*), Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill
 ---
 
 # Video Studio
 
-You produce and edit video on a self-hosted VM. You do not have one renderer — you have three **legs**, and your first job on every request is to **route** to the correct one. Never start authoring before you have classified the request.
+You produce and edit video on this VM. There is no single renderer: each request goes to a **leg** that drives
+a real tool. Route first, build second. `$SKILL` in every command is the directory holding this file.
 
-A skill is instructions, not an engine. Each leg drives a real tool: Remotion (via the `promo-video` skill), Hyperframes (`npx hyperframes`), or `faster-whisper` + `ffmpeg`.
+## Step 0: start from a reference when there is one
 
-## Step 1 — Route
+A pasted reel, Short, TikTok or YouTube link ("make one like this") → invoke the `watch` skill on it first, then
+write a five-line brief before routing: hook length, average shot length, caption style, music energy, and
+what to keep versus change for our brand. Copy structure, never content.
 
-Read [router.md](router.md) and classify the request into exactly one of: **animation-remotion**, **animation-hyperframes**, **footage-edit**, or **hybrid**. When the request is ambiguous (e.g. "make me a video about X" with no footage mentioned and no style cue), ask with `AskUserQuestion` before doing any work — do not guess.
+When the video is for a brand, read that brand's `memory/marketing/<brand>/` notes (palette, typography, real
+logo files). Use the real logo file, never a redrawn one.
 
-Announce the route in one line, e.g. *"Routing to the footage-edit leg: you have a recorded clip to tighten."*
+## Step 1: route
 
-## Step 2 — Execute the leg
+Read [router.md](router.md) and pick exactly one route. Ask with `AskUserQuestion` when the request does not
+say what we start from. Announce the route in one line.
 
 | Route | Playbook | Engine |
-|-------|----------|--------|
+|---|---|---|
 | animation-remotion | [legs/animation-remotion.md](legs/animation-remotion.md) | `promo-video` skill (Remotion) |
-| animation-hyperframes | [legs/animation-hyperframes.md](legs/animation-hyperframes.md) | `npx hyperframes` |
+| animation-hyperframes | [legs/animation-hyperframes.md](legs/animation-hyperframes.md) | `hyperframes:*` skills, `npx hyperframes` |
 | footage-edit | [legs/footage-edit.md](legs/footage-edit.md) | `faster-whisper` + `ffmpeg` |
-| hybrid | this file, "Hybrid orchestration" below | footage + animation + `composite.sh` |
+| ai-footage | [legs/ai-footage.md](legs/ai-footage.md) | clips from `image-gen` (fal), repaired and assembled here |
+| hybrid | "Hybrid assembly" below | footage or AI clips + animation + `composite.sh` |
 
-## Step 3 — Deliver for review
+Voice, music, captions and loudness are shared by every route: [legs/audio.md](legs/audio.md).
 
-The terminal can't play video. When a render or cut finishes, run `ffprobe` to confirm streams/duration, then hand it off: copy to `/mnt/hgfs/vm-share/` or serve it detached (`python3 -m http.server` on `192.168.171.128`) so the user can watch from the Windows host. State the exact path/URL.
+## Step 2: execute the leg
 
-## Hybrid orchestration
+Follow the playbook. Paid generation (fal clips, ElevenLabs voice and music) goes through the `image-gen`
+skill's spend guard or the audio leg, with the cost stated before the call.
 
-Use when a request needs **recorded footage AND generated animation** (e.g. "edit this talk and add an animated title card + lower-thirds").
+## Step 3: check, then deliver
 
-Assembly order:
+Run the QA script on every render before anyone sees it:
 
-1. **Footage leg first** → produce `basecut.mp4` (the tightened recording). See [legs/footage-edit.md](legs/footage-edit.md).
-2. **Animation leg** → produce the overlay/intro pieces. Prefer **Hyperframes** for overlays that need transparency (title cards, lower-thirds, callouts) — render with an alpha-capable format. Use **Remotion** (`promo-video`) for a full generated intro/outro scene. Match the animation's resolution and fps to the base cut (`ffprobe basecut.mp4` to read them).
-3. **Composite** → layer and join with [legs/composite.md](legs/composite.md):
-   - Timed overlays on the base cut → `composite.sh overlay`.
-   - Intro/outro joined to the base → `composite.sh concat` (all inputs must share codec/resolution/fps — re-encode intros to match).
-   - Music bed / voiceover ducking → `composite.sh mixaudio`.
-4. **Verify** each stage with `ffprobe` before the next; never chain re-encodes blindly.
+```bash
+uv run "$SKILL/scripts/qa_render.py" final.mp4 --expect-size 1080x1920 --expect-fps 30 \
+  --expect-audio --mode edit --sheet /tmp/sheet.jpg
+```
 
-## Prerequisites
+- `--mode clip` for a single generated shot (any frame jump is a pop); `--mode edit` for a cut piece (jumps
+  are cuts).
+- Read the contact sheet with the Read tool and look at it. Fix every FAIL; explain or fix every WARN.
+- Then deliver: copy to `/mnt/hgfs/vm-share/videos/<project>/` (the owner watches from Windows) and state the
+  exact path. Keep drafts in a `borradores/` subfolder so the final is unambiguous.
 
-First run of a leg checks its tools. If `faster-whisper` or Hyperframes is missing, follow [setup/install.md](setup/install.md) — propose the install commands to the user (they run them); do not assume a heavy install will succeed silently.
+## Hybrid assembly
+
+For recorded footage or AI clips **plus** generated animation (title cards, lower-thirds, an intro):
+
+1. Base: footage-edit gives `basecut.mp4`, or ai-footage gives the assembled clips.
+2. Animation leg: overlays that need transparency come from Hyperframes (alpha `.mov`/`.webm`); a full intro
+   or outro scene can come from Remotion. Match the base's size and fps (`ffprobe`).
+3. Composite with [legs/composite.md](legs/composite.md): `overlay`, then `concat`, then audio.
+4. QA the result (Step 3).
+
+## Formats
+
+| Where it goes | Size | Notes |
+|---|---|---|
+| Reels, Stories, TikTok, Shorts | 1080×1920, 30 fps | Keep text and logos between y=248 and y=1690 (Instagram covers the rest) |
+| Feed 4:5 | 1080×1350 | |
+| YouTube, web hero | 1920×1080 | |
+
+h264 + yuv420p + AAC 48 kHz, loudness −14 LUFS / −1.5 dBTP (see the audio leg).
 
 ## Rules
 
-- **Route before you build.** Every request starts at Step 1.
-- **Non-blocking.** Transcription and renders run with `run_in_background` or are handed to the user to run. Never block the foreground. Short ops run inline.
-- **Self-hosted only.** No SaaS video services. All processing stays on the VM.
-- **Reuse, don't reimplement.** The Remotion leg *invokes the `promo-video` skill by name* — never copies its logic or hardcodes its paths.
-- **Correctness over speed** in cuts and concats: re-encode at edit points, keep fps/sample-rate explicit, verify with `ffprobe`.
+- **Route before you build.**
+- **Non-blocking.** Transcription, renders and generation run with `run_in_background` or go to the user.
+  Short ops (ffprobe, EDLs, cuts of short clips) run inline. Never run parallel ffmpeg jobs or Hyperframes
+  renders with more than 4 workers: the VM has hard memory ceilings.
+- **Processing stays local.** The only paid services are fal (through image-gen) and ElevenLabs (audio leg).
+- **Reuse, don't reimplement.** Remotion goes through `promo-video`, Hyperframes through its own skills.
+- **Correctness over speed.** Re-encode at edit points, keep fps and sample rate explicit, verify each stage.

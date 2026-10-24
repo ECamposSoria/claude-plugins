@@ -1,8 +1,9 @@
 {
   "name": "video-studio",
-  "version": "1.0.0",
-  "description": "Unified video skill — routes each request to the right leg: promo animation (Remotion via promo-video, or Hyperframes for GSAP/HTML), self-hosted footage editing (faster-whisper transcript + ffmpeg cuts), and hybrid compositing. Fully local; no SaaS.",
+  "version": "1.1.0",
+  "description": "Make and finish video: routes to Remotion, Hyperframes, footage editing, or AI-clip repair and assembly; shared voice, music, captions and loudness; pre-delivery QA script.",
   "author": {
     "name": "ECamposSoria"
-  }
+  },
+  "repository": "https://github.com/ECamposSoria/claude-plugins"
 }

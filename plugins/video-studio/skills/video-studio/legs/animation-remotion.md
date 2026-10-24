@@ -15,7 +15,8 @@ Do **not** copy its phases, scripts, or hardcode its file paths here. It owns:
 - Product understanding → duration/theme/voice questions
 - Remotion project scaffold (`npx create-video`), 1920×1080 composition
 - Scene building with `spring`/`interpolate`, 3D mockups, transitions (incl. metallic swoosh)
-- ElevenLabs voiceover (needs `ELEVEN_LABS_API_KEY`) + Whisper timing verification
+- ElevenLabs voiceover + Whisper timing verification. 🔴 It reads `ELEVEN_LABS_API_KEY`, but our key file
+  (`~/.secrets/elevenlabs.env`) names it `ELEVENLABS_API_KEY`: export the former from the latter first.
 - Bundled royalty-free music, final render + audio mux
 
 It also depends on the `remotion-best-practices` skill for animation fundamentals — that chain stays intact when you delegate.

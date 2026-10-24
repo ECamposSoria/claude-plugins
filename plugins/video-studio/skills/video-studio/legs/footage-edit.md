@@ -65,5 +65,6 @@ Kept duration should equal the sum of your keep-spans (±0.2s). Spot-check the a
 ## Notes
 
 - **No audio track** (silent screen recording): transcription won't help — ask the user for cut points by timestamp/description, write the EDL directly. `cut_from_transcript.py` handles video-only sources.
-- **Subtitles**: the transcript is already a subtitle source — offer to burn captions (build an `.srt` from `segments`, `ffmpeg -vf subtitles=…`) if asked.
+- **Subtitles**: the transcript is already a subtitle source. Burned-in captions, word-by-word reel captions and the font trap are in [audio.md](audio.md).
+- **Check before delivery**: `qa_render.py basecut.mp4 --mode edit --expect-audio` (SKILL.md Step 3).
 - **Filler-word removal makes many small cuts** — that's expected; the single-pass concat handles dozens of spans fine.

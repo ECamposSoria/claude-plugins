@@ -1,29 +1,38 @@
-# video-studio — Unified Video Skill
+# video-studio
 
-One router over the video tools you already have. It classifies a request and drives the right **leg** — it is instructions, not an engine. Nothing leaves the VM.
+One router over the video tools on this VM. It classifies a request and drives the right **leg**; it is
+instructions plus three small scripts, not an engine.
 
-## The three legs
+## Legs
 
 | Leg | Tool | Use when |
 |-----|------|----------|
-| **Animation / Remotion** | delegates to the `promo-video` skill | Motion authored as per-frame React (`useCurrentFrame`, `interpolate`, `spring`), or you reuse React components. |
-| **Animation / Hyperframes** | `npx hyperframes` (Node 22+) | You paste existing web content (landing page, CodePen, HTML), or motion is a library-clock timeline (GSAP, Anime.js, Lottie, Three.js). |
-| **Footage edit** | `faster-whisper` (venv) + `ffmpeg` | You have a real recorded clip to cut/trim/tighten (talking-head, screen recording, demo). |
+| animation-remotion | the `promo-video` skill | Per-frame React motion, reused React components, the guided promo |
+| animation-hyperframes | the `hyperframes:*` skills, `npx hyperframes` | Pasted web content, GSAP/Lottie/Three.js timelines, stories from photos, captions-first social cuts |
+| footage-edit | `faster-whisper` (venv) + `ffmpeg` | A real recording to cut, trim or tighten |
+| ai-footage | clips from the `image-gen` skill (fal), repaired and assembled here | Footage nobody filmed; repairing pops, rewritten lettering, invented clothing marks |
+| audio (shared) | ElevenLabs, Hyperframes `media-use`, ffmpeg `loudnorm` | Voiceover, music, captions, −14 LUFS |
 
-**Hybrid** = footage leg produces a base cut, an animation leg produces overlays/intro, then `composite.sh` layers and muxes them.
+**Hybrid** = a base (footage or AI clips) + animation overlays, joined with `scripts/composite.sh`.
 
-Routing logic lives in `skills/video-studio/router.md`. Leg playbooks live in `skills/video-studio/legs/`.
+Routing: `skills/video-studio/router.md`. Playbooks: `skills/video-studio/legs/`. Setup state:
+`skills/video-studio/setup/install.md`.
 
-## Environment (verified on this VM)
+## Scripts (`skills/video-studio/scripts/`)
 
-- ffmpeg 6.1.1 (libx264 + aac), ffprobe, node v22.22.1, npm/npx, python 3.12, git, chromium — all present.
-- **No system `pip3`** → Python installs go into a venv at `~/.venvs/video-studio` (see `skills/video-studio/setup/install.md`).
-- Hyperframes is fetched on demand via `npx hyperframes` (it may download `chrome-headless-shell` into its own cache for deterministic renders; falls back to screenshot mode on system chromium).
+- `transcribe.py`: faster-whisper word timestamps (run with the venv's Python).
+- `cut_from_transcript.py`: one-pass frame-accurate cut from an edit-decision list.
+- `composite.sh`: `overlay`, `concat`, `mixaudio`.
+- `qa_render.py`: pre-delivery check (probe, black, freeze, silence, loudness, one-frame pops, contact sheet).
+  Tests: `test_qa_render.py`, run in a container.
 
-## Non-blocking policy (VM rule)
+## Policies
 
-Transcription and video renders are long. **Never run them blocking in the foreground.** Either run with `run_in_background`, or print the exact command and ask the user to run it and paste the output. Short ops — `ffprobe`, building the edit-decision list, cutting short clips, `ls` — run inline.
+- **Non-blocking.** Long renders, transcriptions and generations run in the background or go to the user.
+- **Processing is local.** Paid calls are fal (through `image-gen`'s spend guard) and ElevenLabs, quoted first.
+- **QA before delivery.** Every render passes `qa_render.py`; finals go to `/mnt/hgfs/vm-share/videos/<project>/`.
 
-## Handoff for review
+## Considered and not adopted (2026-10-24)
 
-Renders can't be watched inside the terminal. Copy finals to `/mnt/hgfs/vm-share/` (host shared folder), or serve them detached with `python3 -m http.server` bound to `192.168.171.128` so the user can watch from Windows.
+OpenMontage, `/brag`, ManimGX and the Hainrixz motion/editor agents. Reasons in project memory
+`image-video-generation/reference_reel_tools_eval_2026-10.md`.

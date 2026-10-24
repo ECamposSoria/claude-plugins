@@ -1,10 +1,21 @@
-# One-time setup
+# Setup
 
-Run these once per VM. All local, no sudo. **Propose them to the user and let them run and paste output** — the whisper install pulls sizeable wheels (CTranslate2, tokenizers) and is a heavy op.
+State of this VM, verified 2026-10-24. Check before reinstalling anything.
 
-## Footage-edit leg — faster-whisper in a venv
+| Piece | State | Check |
+|---|---|---|
+| ffmpeg / ffprobe | 6.1.1 (libx264 + aac) | `ffmpeg -version` |
+| faster-whisper | 1.2.1 in `~/.venvs/video-studio` | `~/.venvs/video-studio/bin/python -c "import faster_whisper"` |
+| node / npx | v22 | `node -v` |
+| uv | installed (runs `qa_render.py` with numpy, no venv needed) | `uv --version` |
+| Hyperframes | via `npx`; its own `chrome-headless-shell` in `~/.cache/hyperframes/chrome/` | `npx hyperframes doctor` |
+| `unzip` | installed (without it Hyperframes falls back to snap Chromium and hangs) | `which unzip` |
+| ElevenLabs key | `~/.secrets/elevenlabs.env` as `ELEVENLABS_API_KEY` | never print it |
+| fal key | `~/.secrets/fal.env`, used through the `image-gen` skill | never print it |
 
-The VM has no system `pip3`, so use a venv. `python3 -m venv` is verified working here.
+## Rebuilding the transcription venv (a fresh VM only)
+
+Heavy (CTranslate2 and tokenizers wheels): hand these to the user or run them in the background.
 
 ```bash
 python3 -m venv ~/.venvs/video-studio
@@ -12,19 +23,7 @@ python3 -m venv ~/.venvs/video-studio
 ~/.venvs/video-studio/bin/pip install "faster-whisper==1.2.1"
 ```
 
-Verify:
-
-```bash
-~/.venvs/video-studio/bin/python -c "import faster_whisper; print('faster-whisper', faster_whisper.__version__)"
-```
-
-Then always run the transcription script with that interpreter:
-
-```bash
-~/.venvs/video-studio/bin/python <skill>/scripts/transcribe.py <media> --model small
-```
-
-**Models** download on first use into `~/.cache/huggingface/`. Rough sizes / CPU speed:
+Models download on first use into `~/.cache/huggingface/`:
 
 | Model | Size | CPU speed (int8) | Use for |
 |-------|------|------------------|---------|
@@ -32,16 +31,16 @@ Then always run the transcription script with that interpreter:
 | `medium` | ~1.5 GB | ~2–3× realtime | accents, some noise |
 | `large-v3` | ~3 GB | ~1× realtime | noisy audio, max accuracy |
 
-## Hyperframes leg — no install step
+## Hyperframes browser
 
-Hyperframes runs via `npx` (Node 22+ is present, v22.22.1). First `npx hyperframes ...` fetches the CLI. For deterministic BeginFrame renders it may download `chrome-headless-shell` into its own cache; if that fetch fails it falls back to screenshot mode on the system chromium.
-
-Optionally vendor its agent skills (authoring rules that track upstream):
+If `render` hangs with no output, point it at its own headless shell (see
+[../legs/animation-hyperframes.md](../legs/animation-hyperframes.md), trap 1):
 
 ```bash
-npx skills add heygen-com/hyperframes --full-depth --yes
+export HYPERFRAMES_BROWSER_PATH=$(ls -d ~/.cache/hyperframes/chrome/chrome-headless-shell/*/chrome-headless-shell-linux64)/chrome-headless-shell
 ```
 
-## Already present (verified)
+## Not installed, on purpose
 
-ffmpeg 6.1.1 (libx264 + aac), ffprobe, node v22.22.1, npm/npx, python 3.12, git, chromium. Nothing to do.
+VoiceStudio (local voice cloning) and the `heygen` CLI (Hyperframes' free TTS path) are not installed. See
+[../legs/audio.md](../legs/audio.md) before adding either.

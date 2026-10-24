@@ -13,7 +13,7 @@ ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_r
 Title cards, lower-thirds, callouts. The overlay is usually an **alpha** clip (author it in Hyperframes/Remotion and render to a format that carries transparency, e.g. ProRes 4444 `.mov` or VP9 `.webm`). Author it at the base resolution.
 
 ```bash
-composite.sh overlay --base basecut.mp4 --overlay lowerthird.mov --output out.mp4 \
+bash "$SKILL/scripts/composite.sh" overlay --base basecut.mp4 --overlay lowerthird.mov --output out.mp4 \
   --x 80 --y 720 --start 3.0 --duration 5.0
 ```
 
@@ -24,7 +24,7 @@ composite.sh overlay --base basecut.mp4 --overlay lowerthird.mov --output out.mp
 ## `concat` — join intro / base / outro
 
 ```bash
-composite.sh concat --output out.mp4 intro.mp4 basecut.mp4 outro.mp4
+bash "$SKILL/scripts/composite.sh" concat --output out.mp4 intro.mp4 basecut.mp4 outro.mp4
 ```
 
 Inputs may differ in resolution/fps/audio — the script normalizes each to the **first input's** geometry and fps (scale + pad, no stretching), gives every segment a 48 kHz stereo track (silence if it had none), then splices with the concat demuxer. So **order matters**: put the clip whose geometry you want as the target first, or pre-scale your base and list it first.
@@ -32,11 +32,11 @@ Inputs may differ in resolution/fps/audio — the script normalizes each to the 
 ## `mixaudio` — music bed under voiceover
 
 ```bash
-composite.sh mixaudio --video out.mp4 --music bed.mp3 --output final.mp4 \
+bash "$SKILL/scripts/composite.sh" mixaudio --video out.mp4 --music bed.mp3 --output final.mp4 \
   --music-volume 0.12 --duck
 ```
 
-- Video is copied (no re-encode); only audio is rebuilt. The `--video` must already have an audio track (the voiceover/main).
+- Video is copied (no re-encode); only audio is rebuilt. The `--video` must already have an audio track (the voiceover/main); attach one first with the `ffmpeg -map` command in [audio.md](audio.md), which also covers loudness.
 - Music is looped to cover the whole video, with a 1 s fade-in and 2 s fade-out, scaled by `--music-volume` (default `0.12`).
 - `--duck` (recommended with narration) side-chain-compresses the music whenever the voice is present, so speech stays clear. Drop it for music-only pieces.
 - Reuse `promo-video`'s bundled royalty-free tracks as the bed if the user has no music.
@@ -46,9 +46,9 @@ composite.sh mixaudio --video out.mp4 --music bed.mp3 --output final.mp4 \
 ```
 footage-edit  → basecut.mp4
 hyperframes   → lowerthird.mov (alpha), intro.mov
-composite overlay  --base basecut.mp4 --overlay lowerthird.mov --start 3 --duration 5 --output withLT.mp4
-composite concat   --output joined.mp4 intro.mov withLT.mp4
-composite mixaudio --video joined.mp4 --music bed.mp3 --duck --output final.mp4
+composite.sh overlay --base basecut.mp4 --overlay lowerthird.mov --start 3 --duration 5 --output withLT.mp4
+composite.sh concat --output joined.mp4 intro.mov withLT.mp4
+composite.sh mixaudio --video joined.mp4 --music bed.mp3 --duck --output final.mp4
 ffprobe final.mp4   # verify streams/duration, then hand off for review
 ```
 

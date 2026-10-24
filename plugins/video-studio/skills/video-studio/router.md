@@ -1,42 +1,65 @@
-# Router — classify the request
+# Router: classify the request
 
-Walk these gates in order. The first one that matches wins. Stop and route.
+Walk the gates in order. The first match wins.
 
-## Gate 1 — Is there recorded footage?
+## Gate 1: is there real footage to cut?
 
-Does the request involve a **real recorded clip** the user already has (a file they name or attach: talking-head, screen recording, webcam, phone video, demo capture)?
+A clip the user already has (talking head, screen recording, phone video, demo capture).
 
-- **Yes, and that's the whole job** (cut it, trim it, remove filler, tighten, subtitle) → **footage-edit**.
-- **Yes, plus generated animation** (add an intro, title card, lower-thirds, animated overlay, B-roll motion) → **hybrid**.
-- **No recorded footage at all** → continue to Gate 2.
+- Cutting it is the whole job (trim, remove filler, tighten, subtitle) → **footage-edit**.
+- It also needs generated animation (intro, title card, lower-thirds, motion graphics) → **hybrid**.
+- No → Gate 2.
 
-## Gate 2 — Is the user pasting or pointing at existing web content?
+## Gate 2: does the video need footage that doesn't exist?
 
-A landing page, a design-system component, a CodePen/JSFiddle demo, an HTML email, a Claude/Stitch artifact — anything that already exists **as HTML/CSS** and they want animated or turned into video as-is.
+Real-looking people, places or products in motion that nobody filmed: workers assembling a stand, a product
+in use, a rooftop at dusk, a reel built from AI keyframes.
 
-- **Yes** → **animation-hyperframes**. (Remotion would force a rewrite into JSX; Hyperframes plays HTML as-is.)
-- **No** → continue to Gate 3.
+- Yes → **ai-footage**. Generation runs through the `image-gen` skill; repair, assembly and delivery happen
+  here. If it also needs animated overlays, finish the clips first, then treat it as **hybrid**.
+- Only still photos to animate into a story or slideshow → Gate 4 (that is animation, not AI footage).
+- No → Gate 3.
 
-## Gate 3 — Where does the motion come from?
+## Gate 3: is the user pointing at existing web content?
 
-- Motion authored as a **library-clock timeline** — GSAP, Anime.js, Motion One, Lottie, Three.js, ScrollTrigger, SplitText, physics eases → **animation-hyperframes**. (Hyperframes seeks these libraries to `frame/fps`; Remotion runs their clocks at wall-clock and they race to the end.)
-- Motion authored as **per-frame React** — `useCurrentFrame()`, `interpolate()`, `spring()`, hand-tuned component animation — or the user wants to **reuse existing React components** → **animation-remotion**.
-- **Unclear / no preference** → default to **animation-remotion** via `promo-video` (it's the mature, batteries-included promo path with voiceover + music), but say so and offer Hyperframes if they're GSAP/HTML-minded.
+A landing page, component, CodePen, HTML email, Stitch or Claude artifact they want animated as-is.
+
+- Yes → **animation-hyperframes** (it plays HTML as-is; Remotion would force a rewrite into JSX).
+- No → Gate 4.
+
+## Gate 4: where does the motion come from?
+
+- A library-clock timeline (GSAP, Anime.js, Motion One, Lottie, Three.js, SplitText), kinetic typography,
+  a brand story from event photos, captions-led social video → **animation-hyperframes**. Hyperframes seeks
+  these libraries frame by frame; Remotion runs them at wall-clock and they race to the end.
+- Per-frame React (`useCurrentFrame`, `interpolate`, `spring`), or reusing React components, or the full
+  guided promo with voiceover and music → **animation-remotion**.
+- No preference → **animation-remotion** via `promo-video`, and offer Hyperframes.
 
 ## When to ask instead of guess
 
-Use `AskUserQuestion` when:
-
-- The request is "make a video about X" with **no footage named and no style cue** — you can't tell promo-animation from footage-edit. Ask what they're starting from.
-- It's plausibly hybrid but the animation role is vague ("make my demo look nicer") — ask whether they want cuts only, added motion graphics, or both.
+- "Make a video about X" with no footage named and no style cue: ask what we start from (their footage,
+  generated footage, pure animation).
+- "Make my demo look nicer": ask whether they want cuts, motion graphics, or both.
+- AI footage with people: ask whether a continuous shot or several cuts is wanted. A fast-paced cut hides
+  generation errors; a continuous shot shows every one.
 
 ## Quick reference
 
 | Signal in the request | Route |
 |---|---|
-| "cut / trim / tighten this clip", "remove the ums", a named `.mp4` of a real recording | footage-edit |
-| named recording **+** "add an intro / title / lower-thirds / motion graphics" | hybrid |
-| "animate this landing page / CodePen / HTML" | animation-hyperframes |
-| "GSAP / Lottie / Three.js animation", pasted HTML+CSS | animation-hyperframes |
-| "promo / product teaser / animated explainer" (no footage, no style cue) | animation-remotion (offer Hyperframes) |
-| React components to reuse, `interpolate`/`spring` phrasing | animation-remotion |
+| "cut / trim / tighten this clip", "remove the ums", a named recording | footage-edit |
+| named recording + "add an intro / titles / lower-thirds" | hybrid |
+| "realistic video of people doing X", start/end frames, Kling or Seedance clips to assemble | ai-footage |
+| "this generated clip pops / the sign text changes / the shirt logo is wrong" | ai-footage (repair) |
+| "animate this landing page / CodePen / HTML", GSAP, Lottie, Three.js | animation-hyperframes |
+| "story from these event photos", kinetic type, captions-first social cut | animation-hyperframes |
+| "promo / product teaser / animated explainer", React components | animation-remotion |
+| "add a voiceover / music / captions / dub it" to an existing video | the audio leg on its own |
+| a pasted reel or YouTube link, "make one like this" | Step 0 first, then route |
+
+## Considered and not adopted (2026-10-24)
+
+OpenMontage (full agentic studio, AGPL: we borrowed its pre-delivery checks instead), `/brag` (same job as
+`hyperframes:product-launch-video`), ManimGX (math/3D explainer engine, v0.1, untested without a GPU) and the
+Hainrixz motion/editor agents. Reasons in project memory `image-video-generation/reference_reel_tools_eval_2026-10.md`.
