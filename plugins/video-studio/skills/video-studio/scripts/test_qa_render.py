@@ -196,7 +196,7 @@ def test_truncated_faststart_clip_fails(tmp_path):
 def test_frame_shortfall_fails_without_decode_errors(monkeypatch, tmp_path, capsys):
     video = tmp_path / "normal.mp4"
     make_video(video, "color=c=green:s=320x240:r=24:d=2", 2, audio=False)
-    monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 46))
+    monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 46, 1.875))
     assert qa.main([str(video), "--json"]) == 1
     findings = json.loads(capsys.readouterr().out)["findings"]
     assert any(f["check"] == "decode" and f["level"] == "PASS" for f in findings)
@@ -235,8 +235,9 @@ def test_variable_rate_jump_uses_presentation_time(tmp_path):
                "-fps_mode", "passthrough", "-enc_time_base", "1:30", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)]
     made = subprocess.run(command, capture_output=True, text=True, timeout=15)
     assert made.returncode == 0, made.stderr
-    jumps, count = qa._jump_indices(str(video))
+    jumps, count, last = qa._jump_indices(str(video))
     assert count == 90
+    assert last == pytest.approx(3.967, abs=.05)
     assert len(jumps) == 1
     assert jumps[0][0] == 30
     assert jumps[0][1] == pytest.approx(2, abs=.05)
@@ -343,3 +344,28 @@ def test_two_video_tracks_analyse_first_even_when_second_is_default(tmp_path, mo
             assert maps == ["0:1", "0:a:0?"]
         else:
             assert maps == ["0:1"]
+
+
+def test_contact_sheet_on_a_clip_shorter_than_the_sample_count(tmp_path):
+    video = tmp_path / "six-frames.mp4"
+    make_video(video, "color=c=green:s=320x240:r=24:d=0.25", 0.25, audio=False)
+    sheet = tmp_path / "six-frames.jpg"
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--sheet", str(sheet), "--json"],
+                          capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert sheet.is_file() and sheet.read_bytes().startswith(b"\xff\xd8")
+
+
+def test_short_silent_audio_track_fails_and_is_flagged(tmp_path):
+    video = tmp_path / "short-silent-audio.mp4"
+    command = ["ffmpeg", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+               "-f", "lavfi", "-i", "color=c=green:s=320x240:r=24:d=3",
+               "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=1",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)]
+    made = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = run_cli(video, "--expect-audio", expect_duration="3")
+    assert proc.returncode == 1
+    findings = result_json(proc)["findings"]
+    assert any(f["check"] == "silence" and f["level"] == "FAIL" for f in findings)
+    assert any(f["check"] == "audio" and f["level"] == "WARN" and "audio ends at" in f["message"] for f in findings)

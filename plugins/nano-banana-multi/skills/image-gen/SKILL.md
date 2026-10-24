@@ -110,7 +110,7 @@ only a floor: resolution, quality, audio and their schema defaults have each rai
 |---|---|
 | read the price and rerun with `--max-usd` | Work out the full price, rerun with `--max-usd <it>` |
 | above the approval threshold (`FAL_APPROVE_USD`, default $0.50) | **Ask the user**, quoting the price. Rerun with `--approved` only after they say yes. |
-| over the monthly cap (`FAL_MONTHLY_CAP_USD`, unset = no cap) | Report month-to-date spend; `--over-cap` only if the user raises or waives the cap |
+| over the monthly cap (`FAL_MONTHLY_CAP_USD`, unset = no cap) | Report month-to-date spend; `--over-cap` only if the user raises or waives the cap. Runs from the last hour count twice (usage + their reservation) so parallel jobs can't slip past the cap; if that alone blocks a run, show `fal.py spend` and ask. |
 
 The endpoint's schema defaults are merged in before estimating (an omitted `duration` uses its default), and
 the higher of the API floor and `--max-usd` is what gets approved. Never pass `--approved` or `--over-cap` on

@@ -217,7 +217,7 @@ def _ffmpeg_filter(video: str, filter_name: str, filter_expr: str, timeout: floa
     return proc.stderr
 
 
-def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tuple[list[tuple[int, float]], int]:
+def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tuple[list[tuple[int, float]], int, float | None]:
     command = ["ffmpeg", "-nostdin", "-threads", "1", "-filter_threads", "1", "-hide_banner", "-loglevel", "info", "-nostats", "-i", video, "-map", f"0:{video_index}", "-vf", "scale=320:180,format=gray,showinfo=checksum=0", "-an", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
     frame_size = 320 * 180
     error_file = tempfile.TemporaryFile()
@@ -265,6 +265,7 @@ def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tu
         indices = set(jump_indices(diffs))
         jumps: list[tuple[int, float]] = []
         timestamp_count = 0
+        last_timestamp: float | None = None
         for line in error_file:
             match = re.search(rb"\bn:\s*(\d+).*?\bpts_time:\s*(\S+)", line)
             if not match:
@@ -274,6 +275,7 @@ def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tu
             if index != timestamp_count or timestamp is None:
                 raise RuntimeError("invalid frame presentation timestamps")
             timestamp_count += 1
+            last_timestamp = timestamp
             if index in indices:
                 jumps.append((index, timestamp))
         if timestamp_count != len(diffs) + int(previous is not None):
@@ -284,12 +286,16 @@ def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tu
             process.wait()
         process.stdout.close()
         error_file.close()
-    return jumps, len(diffs) + int(previous is not None)
+    return jumps, len(diffs) + int(previous is not None), last_timestamp
 
 
-def _make_sheet(video: str, destination: str, duration: float, frames: int, video_index: int = 0) -> list[float]:
+def _make_sheet(video: str, destination: str, duration: float, frames: int, video_index: int = 0,
+                last_frame: float | None = None) -> list[float]:
     count = max(1, frames)
     times = [i * duration / count for i in range(count)]
+    if last_frame is not None:
+        # never seek past the last decoded frame (tiny clips, containers longer than the picture)
+        times = [min(t, last_frame) for t in times]
     with tempfile.TemporaryDirectory(prefix="qa-render-") as tmp:
         paths = []
         for index, timestamp in enumerate(times):
@@ -387,8 +393,13 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             silent_total = sum(max(0, end - start) for start, end in silence)
             for start, end in silence:
                 findings.append(Finding("WARN", "silence", f"silence from {start:.3f}s to {end:.3f}s ({end-start:.3f}s)", start))
-            if duration and silent_total >= duration * 0.95:
-                findings.append(Finding("FAIL", "silence", f"audio is silent for {silent_total:.3f}s of {duration:.3f}s"))
+            # measure against the audio track itself: a short silent track must not hide in a long container
+            audio_duration = _number(audio_stream.get("duration")) or duration
+            picture_duration = _number(video.get("duration")) or duration
+            if audio_duration and picture_duration and audio_duration < picture_duration - 0.5:
+                findings.append(Finding("WARN", "audio", f"audio ends at {audio_duration:.3f}s, picture runs to {picture_duration:.3f}s"))
+            if audio_duration and silent_total >= audio_duration * 0.95:
+                findings.append(Finding("FAIL", "silence", f"audio is silent for {silent_total:.3f}s of {audio_duration:.3f}s"))
             elif not silence:
                 findings.append(Finding("PASS", "silence", "no silence intervals of 1s or longer"))
             loudness = _ffmpeg_filter(args.video, "ebur128", "ebur128=peak=true", limit)
@@ -404,7 +415,7 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             else:
                 findings.append(Finding("WARN", "peak", "could not parse true peak"))
 
-        jumps, frame_count = _jump_indices(args.video, limit, video_index)
+        jumps, frame_count, last_frame = _jump_indices(args.video, limit, video_index)
         expected_frames, source = expected_frame_count(video, duration, actual_fps)
         if frame_count < 0.98 * expected_frames:
             authoritative = source == "nb_frames"
@@ -421,7 +432,8 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if args.sheet:
             sheet_duration = _number(video.get("duration"))
             times = _make_sheet(args.video, args.sheet,
-                                sheet_duration if sheet_duration is not None else duration, args.sheet_frames, video_index)
+                                sheet_duration if sheet_duration is not None else duration, args.sheet_frames, video_index,
+                                last_frame)
             findings.append(Finding("INFO", "sheet", f"contact sheet saved to {args.sheet}; frames at " + ", ".join(f"{t:.2f}s" for t in times)))
         return _result(args.video, probe, findings), int(any(f.level == "FAIL" for f in findings))
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, RuntimeError) as exc:
