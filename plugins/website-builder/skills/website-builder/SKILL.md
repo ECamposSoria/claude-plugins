@@ -11,13 +11,16 @@ Orchestrates design-intelligence and component tooling to produce **astounding, 
 |-------|------|------|
 | Inspiration | Awwwards · Godly · Land-book · SiteInspire (via `scraper` MCP) | Reference award-winning sites + steal motion ideas before designing |
 | Design system | **`ui-ux-pro-max`** skill | Style, color, typography, UX rules, stack guidelines |
+| Design contract | **DESIGN.md** — [spec](https://github.com/google-labs-code/design.md) + [73-file library](https://github.com/VoltAgent/awesome-design-md) | Freeze Step 1's decisions as tokens + rationale the agent re-reads every session |
 | Components (primary) | **shadcn MCP** + free animated registries (**Aceternity · Magic UI · React Bits**) + **`frontend-design`** skill | Free, you-own-the-code components; distinctive non-generic UI |
 | Components (logos only) | **21st.dev Magic MCP** (`magic`) | `logo_search` for brand SVGs; component generation is human-in-loop (Step 2) |
 | Imagery | **`nano-banana-multi:image-gen`** skill | Hero / background / OG images |
+| Copy | **`humanizer`** skill | Strip AI tells from headlines, body copy and CTAs |
 | Animation | **Motion** (`motion.dev`) + **Lenis** + **GSAP** (free, ScrollTrigger/SplitText) + **View Transitions API** | The thing that makes it astounding |
 | Motion judgment | This plugin's motion skills (Emil Kowalski, MIT): `find-animation-opportunities`, `animate`, `review-animations`, `animation-performance`, `improve-animations`, `animation-vocabulary`, `emil-design-eng`, `apple-design` | Decide what moves and what doesn't, build it right, review it before it ships |
 | 3D | `nano-banana-multi:image-gen` (fal image-to-3D → GLB) + `gltf-transform` + `<model-viewer>` or React Three Fiber | Real products in 3D; immersive scenes only when they earn it |
 | Docs grounding | **context7** — local cache first, MCP on miss | Version-correct Motion/GSAP/Tailwind/shadcn APIs (see Doc Grounding) |
+| Design review | **Impeccable** (`/impeccable critique · audit · polish`) | 61 deterministic anti-slop detectors + design critique — catches the tells `ui-ux-pro-max` did not prevent |
 | Verify | **agent-browser** CLI (functional/visual) + **Chrome DevTools** MCP (frame-rate/jank/CWV) | Confirm it works *and* holds 60fps |
 
 **REQUIRED SUB-SKILL:** Always invoke `ui-ux-pro-max` at the start of every website build.
@@ -100,6 +103,27 @@ python3 ~/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.0.1/src/ui-u
 
 Lock in: `style`, `palette`, `font-pair`, `stack` before writing any component.
 
+### Persist the decisions — `DESIGN.md`
+
+Step 1's output dies with the session unless you write it down, and that is why section 12 of a long build
+drifts away from section 1. Put the decisions in a root **`DESIGN.md`**: YAML front-matter tokens (colors,
+typography, spacing, rounded) plus prose explaining *why* each value exists. It is the design equivalent of
+`AGENTS.md` — a plain markdown file every coding agent re-reads on every later task, no Figma export and no
+schema to configure.
+
+```bash
+# Start from a real design language, not a blank file — 73 DESIGN.md files reverse-engineered
+# from shipped sites: https://github.com/VoltAgent/awesome-design-md
+#   → copy the closest one to ./DESIGN.md, then adapt it to the Step 1 choices
+
+npx @google/design.md lint DESIGN.md              # broken token refs + WCAG contrast, structured JSON, no LLM
+npx @google/design.md diff DESIGN.md DESIGN-v2.md # after a redesign: prove you did not regress the system
+```
+
+`ui-ux-pro-max` *chooses* the design language; `DESIGN.md` is where that choice becomes binding. Write it
+before Step 2 — every component you source or generate afterwards is judged against it, and the `lint`
+contrast check is deterministic, so it catches the low-contrast-on-colored-background tell for free.
+
 ---
 
 ## Step 2 — Source Components
@@ -150,6 +174,22 @@ For bespoke, non-generic sections that no registry covers (custom heroes, unusua
 
 For hero images, backgrounds, illustrations, or OG/social cards, invoke the **`nano-banana-multi:image-gen`**
 skill rather than placeholder stock.
+
+### Copy — `humanizer`
+
+A landing page reads as AI-generated from its words before its pixels: "Unlock the power of…", "In today's
+fast-paced world…", three benefit cards that each say nothing. Award-grade motion wrapped around that copy
+still reads as slop. Run headlines, body copy and CTAs through the **`humanizer`** skill — 25 catalogued AI
+tells, rewritten without inventing facts (it asks rather than fabricating a missing number):
+
+```
+/humanizer
+
+Rewrite the hero and pricing copy in src/app/page.tsx
+```
+
+When the client has real writing — an About page, a founder's posts — paste 2–3 paragraphs first and it
+matches their voice instead of defaulting to neutral marketing register.
 
 ---
 
@@ -381,6 +421,33 @@ When the trace shows dropped frames, run `website-builder:animation-performance`
 **Motion review gate:** before calling the site done, run `website-builder:review-animations` on the
 animation code. It defaults to flagging; fix what it flags or say why not.
 
+**Design quality (`Impeccable`):** agent-browser proves it renders, Chrome DevTools proves it is smooth —
+neither says it is *good*. Impeccable is a design-review vocabulary (24 commands) backed by **61 deterministic
+detector rules** that run with no LLM and no API key, aimed at exactly the tells this skill exists to avoid:
+Inter for everything, purple-to-blue gradients, cards nested in cards, gray text on colored backgrounds, the
+rounded-square icon tile above every heading.
+
+Already installed globally on this VM (`npx impeccable install -y --global`), so `/impeccable` and its
+detector hooks (PostToolUse on Edit/Write, Stop deep pass — both no-ops outside UI files) are live. Run
+`/impeccable init` once per new project to write `PRODUCT.md`; add `npx impeccable install --project` only
+if you want a version-pinned copy inside the repo. The detectors also run standalone in CI — `detect` exits
+2 when it finds anything:
+
+```bash
+npx impeccable detect src/app/page.tsx
+```
+
+```
+/impeccable init                # one-time: records durable product truth in PRODUCT.md
+/impeccable critique  <page>    # UX review: hierarchy, clarity, emotional resonance
+/impeccable audit     <page>    # technical: a11y, performance, responsive
+/impeccable polish    <page>    # final pass + design-system alignment
+/impeccable bolder | quieter | typeset | layout | animate | distill   # targeted fixes
+```
+
+Impeccable grew out of Anthropic's `frontend-design` (Step 2), so treat it as the review half of that
+pairing rather than a competitor to it. Fix what it flags, then re-run `critique` — never ship the first pass.
+
 > Runs **headless** on this Linux VM — no Chrome install needed. Puppeteer auto-downloads chrome-for-testing
 > on first run; pass `--headless=true`, or `--executablePath` pointing at agent-browser's private Chrome
 > (`~/.agent-browser/browsers/chrome-*/chrome`) to skip the download. 🔴 Not `/opt/google/chrome/chrome`: on
@@ -408,3 +475,7 @@ animation code. It defaults to flagging; fix what it flags or say why not.
 | Animating everything because the brief says "animated" | Run `find-animation-opportunities` first; most elements should not move |
 | Shipping a generated GLB straight from the generator | Check it against the product photos, then `gltf-transform optimize`; 20 MB models kill LCP on phones |
 | Declaring "smooth" without measuring | Profile with Chrome DevTools MCP — check dropped frames + CWV, don't eyeball it |
+| Step 1 decisions living only in the chat | Write a root `DESIGN.md` (tokens + rationale) so section 12 still matches section 1 |
+| Picking colors without a contrast check | `npx @google/design.md lint DESIGN.md` — deterministic WCAG check, no LLM in the loop |
+| Shipping without a design critique | Run `/impeccable critique` + `audit`; agent-browser and DevTools verify *working* and *smooth*, never *good* |
+| Award-grade visuals around "Unlock the power of…" copy | Run the copy through `humanizer` — the AI tells show in the words first |
