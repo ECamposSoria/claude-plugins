@@ -281,10 +281,11 @@ Four details that separate a good drag from a bad one:
 - **Damping past boundaries** — dragging beyond a natural edge moves the element less the further it goes. Real things slow before they stop.
 - **Friction, not a wall** — allow the over-drag with rising resistance rather than refusing it.
 
-Settle with a spring so an interrupted drag keeps its velocity:
+Settle with a physics spring that receives the release velocity, so an interrupted drag keeps its momentum:
 
 ```js
-{ type: "spring", duration: 0.5, bounce: 0.2 }
+// stiffness/damping/mass springs carry `velocity`; duration/bounce springs reset it to zero
+animate(element, { y: target }, { type: "spring", stiffness: 400, damping: 30, mass: 1, velocity: releaseVelocity });
 ```
 
 ---

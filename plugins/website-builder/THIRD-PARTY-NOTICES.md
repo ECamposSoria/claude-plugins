@@ -26,9 +26,12 @@ Local changes, all mechanical:
    `useSpring`, which only sets its initial value, so the effect never moved (found by Codex review,
    reproduced). It now feeds a `useTransform` of a `MotionValue`, imports from `motion/react`, and shows the
    `style` binding.
+8. `animate/RECIPES.md`, drag settle: the recipe promised to keep the drag's velocity but used a
+   `duration`/`bounce` spring, which Motion resets to zero velocity (found by Codex review, verified against
+   motion-dom 12.40). It now uses a stiffness/damping/mass spring with the measured release velocity.
 
 Security review on 2026-10-24: static scan plus a prose read of every file; no instructions outside each
 skill's stated job, no network fetches, no settings or permission edits.
 
-To update: diff the new upstream commit against these folders, re-apply the seven changes, update the commit
+To update: diff the new upstream commit against these folders, re-apply the eight changes, update the commit
 above.

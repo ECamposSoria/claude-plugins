@@ -193,15 +193,24 @@ def test_truncated_faststart_clip_fails(tmp_path):
                for f in result_json(proc)["findings"])
 
 
-def test_frame_shortfall_fails_without_decode_errors(monkeypatch, tmp_path, capsys):
+def test_count_shortfall_on_a_complete_timeline_only_warns(monkeypatch, tmp_path, capsys):
     video = tmp_path / "normal.mp4"
     make_video(video, "color=c=green:s=320x240:r=24:d=2", 2, audio=False)
     monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 46, 1.875))
-    assert qa.main([str(video), "--json"]) == 1
+    assert qa.main([str(video), "--json"]) == 0
     findings = json.loads(capsys.readouterr().out)["findings"]
     assert any(f["check"] == "decode" and f["level"] == "PASS" for f in findings)
-    assert any(f["check"] == "frames" and f["level"] == "FAIL" and
-               f["message"] == "decoded 46 of ~48 expected frames" for f in findings)
+    assert any(f["check"] == "frames" and f["level"] == "WARN" and "decoded 46 of ~48" in f["message"] for f in findings)
+
+
+def test_playback_ending_early_fails_without_decode_errors(monkeypatch, tmp_path, capsys):
+    video = tmp_path / "normal.mp4"
+    make_video(video, "color=c=green:s=320x240:r=24:d=2", 2, audio=False)
+    monkeypatch.setattr(qa, "_jump_indices", lambda *args: ([], 24, 0.958))
+    assert qa.main([str(video), "--json"]) == 1
+    findings = json.loads(capsys.readouterr().out)["findings"]
+    assert any(f["check"] == "frames" and f["level"] == "FAIL" and "playback ends at 1.000s of 2.000s" in f["message"]
+               for f in findings)
 
 
 def test_contact_sheet_samples_picture_when_audio_is_longer(tmp_path):
@@ -294,7 +303,7 @@ def test_vfr_matroska_does_not_fail_decode_or_estimated_frames(tmp_path, rates):
     stream = qa.select_video_stream(data["probe"])
     assert "nb_frames" not in stream
     assert any(f["level"] == "WARN" and f["check"] == "frames"
-               and "expected count is an estimate" in f["message"] for f in data["findings"])
+               and "the timeline is complete" in f["message"] for f in data["findings"])
 
 
 def test_two_video_tracks_analyse_first_even_when_second_is_default(tmp_path, monkeypatch):
@@ -399,3 +408,31 @@ def test_contact_sheet_on_a_five_frame_clip(tmp_path):
                           capture_output=True, text=True, timeout=15)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert sheet.is_file()
+
+
+def test_stream_copied_trim_with_edit_list_preroll_passes(tmp_path):
+    source = tmp_path / "source.mp4"
+    trimmed = tmp_path / "trimmed.mp4"
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                           "-i", "testsrc=s=320x240:r=24:d=4", "-c:v", "libx264", "-g", "48", "-pix_fmt", "yuv420p",
+                           str(source)], capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    made = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "1", "-i", str(source),
+                           "-t", "2", "-c", "copy", str(trimmed)], capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(trimmed), "--json"], capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 0, proc.stdout
+    assert not any(f["check"] == "frames" and f["level"] == "FAIL" for f in result_json(proc)["findings"])
+
+
+def test_half_second_silent_track_fails(tmp_path):
+    video = tmp_path / "tiny-silent-audio.mp4"
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+                           "-f", "lavfi", "-i", "color=c=green:s=320x240:r=24:d=3",
+                           "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=0.5",
+                           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(video)],
+                          capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    proc = run_cli(video, "--expect-audio", expect_duration="3")
+    assert proc.returncode == 1
+    assert any(f["check"] == "silence" and f["level"] == "FAIL" for f in result_json(proc)["findings"])

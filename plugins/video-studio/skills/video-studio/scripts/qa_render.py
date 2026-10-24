@@ -418,6 +418,9 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 findings.append(Finding("PASS", "silence", "no silence intervals of 1s or longer"))
             loudness = _ffmpeg_filter(args.video, "ebur128", "ebur128=peak=true", limit)
             integrated, peak = parse_ebur128(loudness)
+            if integrated is not None and integrated <= -60:
+                # catches silent tracks shorter than silencedetect's 1 s minimum
+                findings.append(Finding("FAIL", "silence", f"audio track is silent (integrated {integrated:.1f} LUFS)"))
             if integrated is not None:
                 level = "WARN" if abs(integrated - args.loudness_target) > 1.5 else "PASS"
                 findings.append(Finding(level, "loudness", f"integrated loudness {integrated:.1f} LUFS (target {args.loudness_target:g})"))
@@ -431,11 +434,16 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
         jumps, frame_count, last_frame = _jump_indices(args.video, limit, video_index)
         expected_frames, source = expected_frame_count(video, duration, actual_fps)
-        if frame_count < 0.98 * expected_frames:
-            authoritative = source == "nb_frames"
-            note = "" if authoritative else "; expected count is an estimate (duration × rate)"
-            findings.append(Finding("FAIL" if authoritative else "WARN", "frames",
-                                    f"decoded {frame_count} of ~{expected_frames:g} expected frames{note}"))
+        # Truncation is judged on the timeline: where decoded playback actually ends. Header counts
+        # can include edit-list preroll (stream-copied trims) and estimates use nominal rates.
+        picture_duration = _number(video.get("duration")) or duration
+        played = (last_frame + 1.0 / actual_fps) if last_frame is not None else 0.0
+        if picture_duration and played < picture_duration - max(0.5, 0.05 * picture_duration):
+            findings.append(Finding("FAIL", "frames", f"playback ends at {played:.3f}s of {picture_duration:.3f}s "
+                                                      f"({frame_count} frames decoded)"))
+        elif frame_count < 0.98 * expected_frames:
+            findings.append(Finding("WARN", "frames", f"decoded {frame_count} of ~{expected_frames:g} frames counted by "
+                                                      f"{source}; the timeline is complete (edit-list preroll or nominal rate)"))
         for frame_index, timestamp in jumps:
             level = "WARN" if args.mode == "clip" else "INFO"
             desc = "possible one-frame pop" if args.mode == "clip" else "cut"
