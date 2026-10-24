@@ -19,6 +19,9 @@ export OPENAI_API_KEY="<your-openai-key>"
 
 Each key is only required if you actually use that provider.
 
+For fal.ai (images and video, `skills/image-gen/scripts/fal.py`), put `FAL_KEY=...` in
+`~/.secrets/fal.env` (mode 600) or export `FAL_KEY`.
+
 ## Manual smoke test
 
 ```bash

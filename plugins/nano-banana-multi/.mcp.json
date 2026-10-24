@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "flora": {
-      "type": "http",
-      "url": "https://agents.flora.ai/mcp"
-    }
-  }
-}

@@ -30,6 +30,7 @@ MODEL_IDS = {
     "pro":   "gemini-3-pro-image-preview",
     "codex": "gpt-image-2",   # via Codex CLI's native image_gen tool (no OPENAI_API_KEY)
     "gpt":   "gpt-image-2",   # backward-compat alias for "codex"
+    "agy":   "antigravity",   # Antigravity CLI's image-generator subagent (Google AI Pro sub)
 }
 
 PROVIDERS = {
@@ -37,6 +38,7 @@ PROVIDERS = {
     "pro":   "gemini",
     "codex": "codex",
     "gpt":   "codex",  # deprecated alias -> codex
+    "agy":   "agy",
 }
 
 
@@ -222,16 +224,19 @@ def generate_codex(
         f"{quality_note}{ref_note}"
     )
 
+    # The prompt goes through stdin: `--image` takes multiple values, so a trailing
+    # positional prompt would be swallowed as one more image path.
     cmd = [codex, "exec", "--skip-git-repo-check"]
     for ref_path in references:
         cmd += ["--image", os.path.abspath(ref_path)]
-    cmd.append(instruction)
 
     images_dir = os.path.expanduser("~/.codex/generated_images")
     start = time.time() - 2  # small clock-skew buffer
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        proc = subprocess.run(
+            cmd, input=instruction, capture_output=True, text=True, timeout=900
+        )
     except subprocess.TimeoutExpired:
         print("Error: Codex image generation timed out (900s).", file=sys.stderr)
         sys.exit(1)
@@ -265,6 +270,82 @@ def generate_codex(
     sys.exit(1)
 
 
+def generate_agy(
+    prompt: str,
+    output_path: str,
+    aspect: str = "square",
+    references: list[str] | None = None,
+    size: str = "1K",
+) -> None:
+    """Generate an image with the Antigravity CLI's image-generator subagent.
+
+    Runs on the Google AI Pro subscription (no API spend). Reference images are passed
+    by absolute path inside the prompt. The subagent saves to the requested path; if it
+    only leaves its own artifact under ~/.gemini/antigravity-cli/brain/, the newest image
+    written there during this run is copied instead.
+    """
+    import glob
+    import shutil
+    import subprocess
+    import time
+
+    agy = shutil.which("agy") or os.path.expanduser("~/.local/bin/agy")
+    if not os.path.exists(agy):
+        print("Error: 'agy' (Antigravity CLI) not found. Install it and sign in once.", file=sys.stderr)
+        sys.exit(1)
+
+    references = [os.path.abspath(r) for r in (references or [])]
+    for ref_path in references:
+        if not os.path.exists(ref_path):
+            print(f"Error: Reference image not found: {ref_path}", file=sys.stderr)
+            sys.exit(1)
+
+    out_abs = os.path.abspath(output_path)
+    out_dir = os.path.dirname(out_abs)
+    os.makedirs(out_dir, exist_ok=True)
+    aspect_word = {"square": "1:1", "landscape": "16:9", "portrait": "9:16"}.get(aspect, "1:1")
+    refs_text = "".join(f"\n{i}. {p}" for i, p in enumerate(references, 1))
+    instruction = (
+        "Use your image-generator subagent to create exactly ONE image and save it as "
+        f"{out_abs}. Aspect ratio {aspect_word}, {size} resolution or the closest available. "
+        + (f"Pass ALL of these reference images to the subagent by path:{refs_text}\n" if references else "")
+        + f"Image description: {prompt}\n"
+        "Do not ask questions. When done, reply only with the output path."
+    )
+    env = {k: v for k, v in os.environ.items() if k not in ("GEMINI_API_KEY", "GOOGLE_API_KEY")}
+    cmd = [agy, "-p", instruction, "--model", os.environ.get("AGY_IMAGE_MODEL", "gemini-3.8-flash-high"),
+           "--dangerously-skip-permissions", "--print-timeout", "840s", "--add-dir", out_dir]
+    for ref_dir in sorted({os.path.dirname(p) for p in references} - {out_dir}):
+        cmd += ["--add-dir", ref_dir]
+
+    brain = os.path.expanduser("~/.gemini/antigravity-cli/brain")
+    start = time.time() - 2
+    try:
+        proc = subprocess.run(cmd, cwd=out_dir, env=env, capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        print("Error: Antigravity image generation timed out (900s).", file=sys.stderr)
+        sys.exit(1)
+
+    if os.path.exists(out_abs) and os.path.getmtime(out_abs) >= start:
+        print(f"Image saved to: {out_abs}")
+        return
+    newest, newest_mtime = None, start
+    for pattern in ("**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.webp"):
+        for candidate in glob.glob(os.path.join(brain, pattern), recursive=True):
+            mtime = os.path.getmtime(candidate)
+            if mtime >= newest_mtime:
+                newest, newest_mtime = candidate, mtime
+    if newest:
+        shutil.copyfile(newest, out_abs)
+        print(f"Image saved to: {out_abs} (from {newest})")
+        return
+    tail = ((proc.stdout or "")[-1500:] + (proc.stderr or "")[-1500:]).strip()
+    if tail:
+        sys.stderr.write(tail + "\n")
+    print("Error: Antigravity did not produce an image (quota? sign-in?).", file=sys.stderr)
+    sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate images using Gemini (Flash, Pro) or gpt-image-2 via the Codex CLI"
@@ -285,11 +366,12 @@ def main():
     )
     parser.add_argument(
         "--model",
-        choices=["flash", "pro", "codex", "gpt"],
+        choices=["flash", "pro", "codex", "gpt", "agy"],
         default="flash",
         help=(
             "Model: flash (Gemini fast), pro (Gemini high-quality), "
-            "codex (official gpt-image-2 via the Codex CLI; 'gpt' is a deprecated alias)"
+            "codex (official gpt-image-2 via the Codex CLI; 'gpt' is a deprecated alias), "
+            "agy (Antigravity CLI image-generator subagent on the Google AI Pro subscription)"
         ),
     )
     parser.add_argument(
@@ -315,6 +397,8 @@ def main():
         generate_codex(
             args.prompt, args.output, args.aspect, args.references, args.size, args.quality,
         )
+    elif PROVIDERS[args.model] == "agy":
+        generate_agy(args.prompt, args.output, args.aspect, args.references, args.size)
     else:
         generate_image(
             args.prompt, args.output, args.aspect, args.references, args.model, args.size,

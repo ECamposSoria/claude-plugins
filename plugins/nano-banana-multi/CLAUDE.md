@@ -21,6 +21,12 @@ Options:
 - `--size` (optional): `1K` (default) | `2K` | `4K` (applies to `pro` and `gpt`)
 - `--quality` (optional): `auto` (default) | `low` | `medium` | `high` (applies to `gpt` only)
 
+## fal.ai runner
+
+`skills/image-gen/scripts/fal.py` drives any fal.ai endpoint (image or video): `search`, `schema`,
+`price`, `run`, `result`. Usage and the endpoint shortlist live in `skills/image-gen/SKILL.md`.
+Needs `FAL_KEY` (env, or `~/.secrets/fal.env`).
+
 ## Prerequisites
 
 - `GEMINI_API_KEY` env var: required for `--model flash` and `--model pro`
