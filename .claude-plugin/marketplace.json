@@ -30,12 +30,12 @@
     },
     {
       "name": "nano-banana-multi",
-      "description": "Multi-provider image generation: Google Gemini (Flash, Pro) + OpenAI gpt-image-2. Single CLI surface, provider selected via --model. Forked from buildatscale-claude-code/nano-banana-pro to add OpenAI support.",
+      "description": "AI generation: images (Gemini, gpt-image-2 via Codex, Antigravity), video clips and 3D models via fal.ai, with a spend guard on every paid run.",
       "source": "./plugins/nano-banana-multi"
     },
     {
       "name": "website-builder",
-      "description": "Website builder skill with 21st.dev Magic MCP for production-ready component generation, Framer Motion animations, and ui-ux-pro-max design system integration",
+      "description": "Website builder: ui-ux-pro-max design system, shadcn and animated registries, Motion/GSAP/Lenis animation with Emil Kowalski's motion-judgment skills, and 3D product models via model-viewer.",
       "source": "./plugins/website-builder"
     },
     {
@@ -50,7 +50,7 @@
     },
     {
       "name": "video-studio",
-      "description": "Unified video skill — routes each request to the right leg: promo animation (Remotion via promo-video, or Hyperframes for GSAP/HTML), self-hosted footage editing (faster-whisper transcript + ffmpeg cuts), and hybrid compositing. Fully local, no SaaS.",
+      "description": "Make and finish video: routes to Remotion, Hyperframes, footage editing, or AI-clip repair and assembly; shared voice, music, captions and loudness; pre-delivery QA script.",
       "source": "./plugins/video-studio"
     }
   ]

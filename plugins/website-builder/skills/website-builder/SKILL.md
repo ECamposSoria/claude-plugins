@@ -1,6 +1,6 @@
 ---
 name: website-builder
-description: Use when building, designing, or improving any website, landing page, marketing site, portfolio, SaaS frontend, or multi-page web app — including requests to create pages, add sections, implement animations, pick a visual style, or choose components. Triggers on words like "build a website", "landing page", "hero section", "make it animated", "add framer motion", "find a component".
+description: Use when building, designing, or improving any website, landing page, marketing site, portfolio, SaaS frontend, or multi-page web app — including requests to create pages, add sections, implement or fix animations, pick a visual style, choose components, or show a product in 3D. Triggers on words like "build a website", "landing page", "hero section", "make it animated", "add framer motion", "the animations feel cheap/janky", "find a component", "3D model on the page", "product viewer".
 ---
 
 # Website Builder
@@ -15,8 +15,10 @@ Orchestrates design-intelligence and component tooling to produce **astounding, 
 | Components (logos only) | **21st.dev Magic MCP** (`magic`) | `logo_search` for brand SVGs; component generation is human-in-loop (Step 2) |
 | Imagery | **`nano-banana-multi:image-gen`** skill | Hero / background / OG images |
 | Animation | **Motion** (`motion.dev`) + **Lenis** + **GSAP** (free, ScrollTrigger/SplitText) + **View Transitions API** | The thing that makes it astounding |
+| Motion judgment | This plugin's motion skills (Emil Kowalski, MIT): `find-animation-opportunities`, `animate`, `review-animations`, `animation-performance`, `improve-animations`, `animation-vocabulary`, `emil-design-eng`, `apple-design` | Decide what moves and what doesn't, build it right, review it before it ships |
+| 3D | `nano-banana-multi:image-gen` (fal image-to-3D → GLB) + `gltf-transform` + `<model-viewer>` or React Three Fiber | Real products in 3D; immersive scenes only when they earn it |
 | Docs grounding | **context7** — local cache first, MCP on miss | Version-correct Motion/GSAP/Tailwind/shadcn APIs (see Doc Grounding) |
-| Verify | **Playwright** MCP (functional/visual) + **Chrome DevTools** MCP (frame-rate/jank/CWV) | Confirm it works *and* holds 60fps |
+| Verify | **agent-browser** CLI (functional/visual) + **Chrome DevTools** MCP (frame-rate/jank/CWV) | Confirm it works *and* holds 60fps |
 
 **REQUIRED SUB-SKILL:** Always invoke `ui-ux-pro-max` at the start of every website build.
 
@@ -43,15 +45,15 @@ digraph website_builder {
     "1. Invoke ui-ux-pro-max" [shape=box];
     "2. Source components (shadcn + registries / frontend-design)" [shape=box];
     "3. Animate (Motion + Lenis + GSAP + View Transitions)" [shape=box];
-    "4. Verify (Playwright + Chrome DevTools)" [shape=box];
+    "4. Verify (agent-browser + Chrome DevTools)" [shape=box];
     "Done" [shape=doublecircle];
 
     "Start: website request" -> "0. Gather inspiration (galleries)";
     "0. Gather inspiration (galleries)" -> "1. Invoke ui-ux-pro-max";
     "1. Invoke ui-ux-pro-max" -> "2. Source components (shadcn + registries / frontend-design)";
     "2. Source components (shadcn + registries / frontend-design)" -> "3. Animate (Motion + Lenis + GSAP + View Transitions)";
-    "3. Animate (Motion + Lenis + GSAP + View Transitions)" -> "4. Verify (Playwright + Chrome DevTools)";
-    "4. Verify (Playwright + Chrome DevTools)" -> "Done";
+    "3. Animate (Motion + Lenis + GSAP + View Transitions)" -> "4. Verify (agent-browser + Chrome DevTools)";
+    "4. Verify (agent-browser + Chrome DevTools)" -> "Done";
 }
 ```
 
@@ -62,7 +64,7 @@ digraph website_builder {
 Before locking a style, pull 2–4 reference sites that match the product's mood and **note their motion
 techniques** (scroll behavior, reveal timing, hero treatment). None of these galleries have a public API
 and all are JS-heavy with anti-bot, so use the **`scraper` MCP** (`scrape-url` / `extract-structured-data`
-— stealth tier first, cloud fallback automatic). Playwright MCP is the fallback when you need to *see* the
+— stealth tier first, cloud fallback automatic). `agent-browser` is the fallback when you need to *see* the
 live page; `WebFetch` will usually be blocked.
 
 | Gallery | URL | Strongest for |
@@ -157,7 +159,22 @@ skill rather than placeholder stock.
 > New projects use the `motion` package and `motion/react` import. `framer-motion` still works as a
 > legacy alias if a project already depends on it.
 
-Animation is what separates an astounding site from a templated one. Build in three layers:
+Animation is what separates an astounding site from a templated one, and too much of it is what makes a
+site feel cheap. Every animation needs a job: orient, give feedback, or connect two states. Motion on
+something people use a hundred times a day (typing, navigation, toggles) gets none or stays under 150 ms.
+
+**Decide before you build** (skills in this plugin; invoke by name):
+
+| Situation | Skill |
+|---|---|
+| New page: where should anything move? | `website-builder:find-animation-opportunities` (proposes a few spots with exact values, rejects the rest) |
+| Building one animation (curve, duration, CSS vs JS, interruptibility) | `website-builder:animate` |
+| Existing site "feels cheap", too busy, or janky | `website-builder:improve-animations` (audit + prioritised plans) |
+| The user describes an effect vaguely ("the bouncy thing") | `website-builder:animation-vocabulary` |
+| Gesture-driven UI, springs, drag/swipe, sheets | `website-builder:apple-design` |
+| Component polish beyond motion | `website-builder:emil-design-eng` |
+
+Then build in three layers:
 **(A) smooth scroll foundation → (B) scroll-linked storytelling → (C) micro-interaction polish.**
 
 ```bash
@@ -284,10 +301,28 @@ For route and same-page element transitions, prefer the **native View Transition
 `<ViewTransition>`; otherwise `document.startViewTransition(() => updateDOM())`. Progressive-enhance —
 cross-document transitions are still Chromium/Safari only, so never make core navigation depend on them.
 
-### 3D / WebGL hero
+### 3D: product models and WebGL scenes
 
-React Three Fiber (`@react-three/fiber` + `drei`) or **Spline** for no-code scenes — only when an
-immersive 3D hero genuinely earns the bundle and perf cost. Gate behind explicit "3D" intent.
+Two different jobs. Gate both behind explicit 3D intent.
+
+**A real product the visitor can spin, zoom or place in AR**
+
+1. **Get a model.** Ask first whether the client has a CAD export or GLB. If not, generate one with the
+   `nano-banana-multi:image-gen` skill: fal image-to-3D, where Hunyuan 3D Pro takes front, back and side photos
+   (~$0.38–0.68). Its `references/fal-endpoints.md` has the options and prices.
+2. **Check it against the photos.** Generators invent the hidden sides and smear printed labels. The client
+   approves the model before it ships.
+3. **Optimise it.** `npx @gltf-transform/cli optimize in.glb out.glb --compress meshopt --texture-compress webp`
+   (CLI 4.5). Aim for ≤ 3 MB; add `--simplify true --simplify-ratio 0.5` if it is still heavy.
+4. **Show it** with `<model-viewer>` (`@google/model-viewer` 4.4, a web component: no React or Three.js code):
+   `camera-controls`, `auto-rotate`, a `poster` image for first paint, `loading="lazy"` below the fold, `ar`
+   for phones.
+
+**An immersive scene or hero**: React Three Fiber (`@react-three/fiber` + `drei`, `useGLTF` to load models)
+or **Spline** for no-code scenes, only when it genuinely earns the bundle and the frame budget.
+
+Either way: poster first (it is the LCP element), stop auto-rotation under `prefers-reduced-motion`, test at
+375 px, and ground model-viewer / R3F / gltf-transform APIs in context7 before writing code.
 
 ### Animation Rules (non-negotiable)
 
@@ -324,10 +359,12 @@ function AnimatedSection({ children }) {
 
 ## Step 4 — Verify
 
-After building, run the dev server and verify on two distinct axes — **does it work** (Playwright) and
+After building, run the dev server and verify on two distinct axes — **does it work** (agent-browser) and
 **is it actually smooth** (Chrome DevTools).
 
-**Functional / visual (Playwright MCP):** navigate to the local dev server and confirm:
+**Functional / visual (`agent-browser`):** `open` the local dev server, then **`wait` for a real element**
+(`open` returns before an SPA hydrates), then `snapshot -c -i` — never a bare `snapshot`, it dumps the whole
+a11y tree into context. Use `screenshot` when the question is visual rather than structural. Confirm:
 - Visual style matches the Step 1 design decisions and the Step 0 references
 - Smooth scroll feels inertial (Lenis active), scroll-linked effects track the scrollbar
 - Reveal/stagger animations fire once on entry, not on scroll-up
@@ -335,14 +372,19 @@ After building, run the dev server and verify on two distinct axes — **does it
 - Mobile viewport renders correctly (resize to 375px) and heavy scroll effects degrade gracefully
 - `prefers-reduced-motion` disables non-essential motion
 
-**Frame-rate / performance (Chrome DevTools MCP):** Playwright confirms it *renders and works*; Chrome
+**Frame-rate / performance (Chrome DevTools MCP):** agent-browser confirms it *renders and works*; Chrome
 DevTools confirms it's *actually smooth*. Record a performance trace while scrolling and check for **dropped
 frames / long tasks**, plus Core Web Vitals (LCP / CLS / INP). Polish that runs at 30fps isn't polish — if
 a scroll effect drops frames, the most common cause is animating a non-compositor property (see rules).
+When the trace shows dropped frames, run `website-builder:animation-performance` on the offending effect.
+
+**Motion review gate:** before calling the site done, run `website-builder:review-animations` on the
+animation code. It defaults to flagging; fix what it flags or say why not.
 
 > Runs **headless** on this Linux VM — no Chrome install needed. Puppeteer auto-downloads chrome-for-testing
-> on first run; pass `--headless=true`, or `--executablePath` to the existing Playwright chromium to skip
-> the download. The MCP is wired in this plugin's `.mcp.json` as `chrome-devtools`.
+> on first run; pass `--headless=true`, or `--executablePath` pointing at agent-browser's private Chrome
+> (`~/.agent-browser/browsers/chrome-*/chrome`) to skip the download. 🔴 Not `/opt/google/chrome/chrome`: on
+> this VM it is a symlink to Microsoft Edge. The MCP is wired in this plugin's `.mcp.json` as `chrome-devtools`.
 
 ---
 
@@ -363,4 +405,6 @@ a scroll effect drops frames, the most common cause is animating a non-composito
 | `staggerChildren` on large lists (50+ items) | Cap at ~20 visible items or use `AnimatePresence` + virtualization |
 | Hand-rolling complex scroll/text effects in Motion | Use GSAP ScrollTrigger/SplitText (now free) for pinning, scrubbing, and masked text reveals |
 | Reaching for Three.js by default | Motion + Lenis + GSAP cover ~95% of award-grade 2D work; add WebGL only for genuine 3D |
+| Animating everything because the brief says "animated" | Run `find-animation-opportunities` first; most elements should not move |
+| Shipping a generated GLB straight from the generator | Check it against the product photos, then `gltf-transform optimize`; 20 MB models kill LCP on phones |
 | Declaring "smooth" without measuring | Profile with Chrome DevTools MCP — check dropped frames + CWV, don't eyeball it |
