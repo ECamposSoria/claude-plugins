@@ -162,12 +162,12 @@ def _windows(duration: float, width: float = 4.0) -> list[tuple[float, float]]:
     return spans
 
 
-def _short_db(audio: np.ndarray, width: int = 2000, hop: int = 400) -> np.ndarray:
-    if len(audio) < width:
+def _short_db(power: np.ndarray, width: int = 2000, hop: int = 400) -> np.ndarray:
+    if len(power) < width:
         return np.array([])
-    power = np.concatenate(([0.0], np.cumsum(audio ** 2)))
-    starts = np.arange(0, len(audio) - width + 1, hop)
-    return 10 * np.log10(np.maximum((power[starts + width] - power[starts]) / width, 1e-20))
+    total = np.concatenate(([0.0], np.cumsum(power)))
+    starts = np.arange(0, len(power) - width + 1, hop)
+    return 10 * np.log10(np.maximum((total[starts + width] - total[starts]) / width, 1e-20))
 
 
 def _runs(start: float, flags: np.ndarray, hop: float = .05) -> list[float]:
@@ -219,12 +219,6 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
         # song has none, any energy in the video was added (it cancels in the signal that was matched).
         # A short dropout or insert barely moves a 4 s correlation: compare 250 ms stretches too. 30 dB keeps a
         # dip (a level WARN) apart from audio that is gone or added.
-        aligned_video, aligned_song = _align(p_video, p_song, round(lag * 8))
-        # 250 ms stretches every 50 ms: any mute of 250 ms or more fills at least one of them.
-        video_db, song_db = _short_db(aligned_video), _short_db(aligned_song)
-        offset = max(lag, 0) / 1000
-        row["dropouts"] = _runs(start + offset, (song_db > -50) & (video_db < song_db - 30))
-        row["inserts"] = _runs(start + offset, (video_db > -50) & (video_db > song_db + 30))
         if stereo and _rms_db(q_song) - _rms_db(p_song) > -30:
             aligned_video, aligned_song = _align(q_video, q_song, round(lag * 8))
             row[f"{other}_correlation"] = _pearson(aligned_video, aligned_song)
@@ -267,9 +261,20 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
                                 f"({'side' if lowest['side_correlation'] is not None else 'mid'} correlation "
                                 f"{secondary(lowest, 'correlation'):.2f} at {format_time(lowest['t'])}), at {where(image)}: "
                                 "channels swapped, folded to mono or remixed?", image[0]["t"]))
+    # A short dropout or insert barely moves a 4 s correlation, and could straddle two windows: compare
+    # 250 ms stretches every 50 ms across the whole file, on the power of both channels (an antiphase
+    # passage cancels in the mid). 30 dB keeps a dip (a level WARN) apart from audio that is gone or added.
+    shift = round(float(np.median([w["lag_ms"] for w in matched])) * 8) if matched else 0
+    video_power = video ** 2 + (video_side ** 2 / 4 if stereo else 0)
+    song_power = song ** 2 + (song_side ** 2 / 4 if stereo else 0)
+    video_db, song_db = (_short_db(p) for p in _align(video_power, song_power, shift))
+    count = min(len(video_db), len(song_db))
+    video_db, song_db, offset = video_db[:count], song_db[:count], max(shift, 0) / 8000
+    stretches = {"dropouts": _runs(offset, (song_db > -50) & (video_db < song_db - 30)),
+                 "inserts": _runs(offset, (video_db > -50) & (video_db > song_db + 30))}
     for key, message in (("dropouts", "the video's audio drops out where the song plays"),
                          ("inserts", "the video's audio has sound where the song is quiet")):
-        times = [t for w in matched for t in w.get(key, [])]
+        times = stretches[key]
         if times:
             findings.append(Finding("FAIL", "audio-match", f"{message} in {len(times)} stretch{'es' if len(times) > 1 else ''} of 0.25 s, at "
                                     + ", ".join(format_time(t) for t in times[:5]) + (" …" if len(times) > 5 else ""), times[0]))

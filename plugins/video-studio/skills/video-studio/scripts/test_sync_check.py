@@ -388,6 +388,12 @@ def test_short_dropout(tmp_path: Path, song: dict) -> None:
     failures = [f for f in findings if f.level == "FAIL"]
     assert len(failures) == 1 and "drops out where the song plays in 1 stretch of 0.25 s" in failures[0].message
     assert 5.0 <= failures[0].t <= 5.1
+    boundary = song_audio.copy()
+    boundary[round(3.8 * 8000):round(4.2 * 8000)] = 0
+    findings, _ = sync.audio_match(boundary, song_audio, 12, 30)
+    failures = [f for f in findings if f.level == "FAIL"]
+    assert len(failures) == 1 and "drops out where the song plays in 1 stretch of 0.25 s" in failures[0].message
+    assert 3.55 < failures[0].t < 4.2
 
 
 def test_few_accents_and_no_events() -> None:
