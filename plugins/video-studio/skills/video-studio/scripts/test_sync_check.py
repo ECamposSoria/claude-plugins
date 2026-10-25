@@ -308,7 +308,7 @@ def test_stereo_edge_cases() -> None:
     song = np.stack([a, .6 * a + .8 * b], axis=1)
     findings, windows = sync.audio_match(song[:96989].copy(), song, 12.124, 30)
     assert not any(f.level in ("FAIL", "WARN") for f in findings)
-    assert windows[-1]["side_correlation"] == pytest.approx(1)
+    assert windows[-1]["side_correlation"] == pytest.approx(1, abs=1e-4)
     mid, side = song.mean(axis=1), song[:, 0] - song[:, 1]
     narrow = np.stack([mid + .05 * side, mid - .05 * side], axis=1)
     findings, _ = sync.audio_match(narrow, song, 12.124, 30)
@@ -323,6 +323,41 @@ def test_stereo_edge_cases() -> None:
     muted[8000 * 4:8000 * 8] = 0
     findings, _ = sync.audio_match(muted, antiphase, 12.124, 30)
     assert any(f.level == "FAIL" and "silent where the song is not in 1 of 3 windows, at 0:04.0" in f.message for f in findings)
+
+
+def test_missing_audio_and_added_side() -> None:
+    rng = np.random.default_rng(3)
+    song = rng.normal(size=8000 * 12)
+    findings, windows = sync.audio_match(song[:8000 * 8].copy(), song, 12, 30)
+    assert any(f.level == "FAIL" and "silent where the song is not in 1 of 3 windows, at 0:08.0" in f.message for f in findings)
+    dual = np.stack([song, song], axis=1)
+    noise = .3 * rng.normal(size=len(song))
+    findings, windows = sync.audio_match(dual.copy(), dual, 12, 30)
+    assert not any(f.level in ("FAIL", "WARN") for f in findings)
+    findings, _ = sync.audio_match(np.stack([song + noise, song - noise], axis=1), dual, 12, 30)
+    failures = [f for f in findings if f.level == "FAIL"]
+    assert len(failures) == 1 and "stereo content the song lacks in 3 of 3 windows" in failures[0].message
+
+
+def test_audio_gap_and_mono_song_side(tmp_path: Path, song: dict) -> None:
+    gap = tmp_path / "gap.mkv"
+    make_video(gap, song, audio_filter="aselect='not(between(t,4,8))'")
+    plain = subprocess.run(["ffmpeg", "-v", "error", "-i", str(gap), "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "f32le", "-"],
+                           capture_output=True, check=True, timeout=60).stdout
+    assert len(plain) / 4 / 8000 < 9
+    code, result = check(gap, song)
+    assert code == 1
+    assert any(f["level"] == "FAIL" and f["check"] == "audio-match" and f["t"] == 4.0 for f in result["findings"]), result
+    with wave.open(str(song["path"]), "rb") as source:
+        mono = np.frombuffer(source.readframes(source.getnframes()), dtype="<i2").astype(np.float64) / 32767
+    noise = np.random.default_rng(4).normal(0, .05, len(mono))
+    noisy = tmp_path / "antiphase-noise.wav"
+    write_wav(noisy, np.stack([mono + noise, mono - noise], axis=1))
+    video = tmp_path / "antiphase-noise.mp4"
+    make_video(video, song, audio=noisy)
+    code, result = check(video, song)
+    assert code == 1
+    assert any(f["level"] == "FAIL" and "stereo content the song lacks" in f["message"] for f in result["findings"])
 
 
 def test_few_accents_and_no_events() -> None:
