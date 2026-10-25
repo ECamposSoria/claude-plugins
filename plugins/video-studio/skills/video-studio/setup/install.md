@@ -15,7 +15,13 @@ State of this VM, verified 2026-10-24. Check before reinstalling anything.
 | VoiceStudio 0.5.6 | Docker image `ghcr.io/debpalash/omnivoice-studio:0.5.6` (17 GB), volume `voicestudio-data` with the OmniVoice model (3.3 GB); started on demand from `voicestudio/docker-compose.yml` | `docker compose -p voicestudio -f voicestudio/docker-compose.yml up -d --wait --wait-timeout 300` (returns once healthy) |
 | VoiceStudio key | `~/.secrets/voicestudio.env` as `OMNIVOICE_API_KEY` (same key on the laptop) | never print it |
 | Laptop GPU VoiceStudio | WSL2 Ubuntu on LENOVODOC, Docker 29.9 + NVIDIA runtime, RTX 4070 8 GB; compose at `~/voicestudio/docker-compose.yml` there (copy of `voicestudio/docker-compose.gpu.yml`), key at `~/.secrets/voicestudio.env` there | `ssh lenovo-nat 'wsl -- bash -lc "docker ps"'` |
+| Song listener (CPU) | Docker image `video-studio-listener:0.1.0` (3.3 GB), models in volume `listener-models` (Demucs, Beat This!, Whisper large-v3-turbo); one-shot `run --rm` | `docker image inspect video-studio-listener:0.1.0` |
+| Song listener (laptop GPU) | image `video-studio-listener:0.1.0-cu128` in the laptop's WSL Docker, build files in `~/listener/setup/` there; driven from the VM by `scripts/listen_remote.sh` | `ssh lenovo-nat 'wsl -- bash -lc "docker image inspect video-studio-listener:0.1.0-cu128 >/dev/null && echo ok"'` |
 | Tunnel to the laptop | systemd user unit `host-gpu-tunnel.service` (enabled, restarts every 30 s), forwards from the `lenovo-gpu-tunnel` entry in `~/.ssh/config` (VM `127.0.0.1:13900` → laptop `127.0.0.1:3900`) | `systemctl --user status host-gpu-tunnel` |
+
+## Song listener
+
+Build and run commands, timings and licences: [listener/README.md](listener/README.md).
 
 ## Rebuilding the transcription venv (a fresh VM only)
 

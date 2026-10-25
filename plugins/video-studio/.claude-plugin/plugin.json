@@ -1,7 +1,7 @@
 {
   "name": "video-studio",
-  "version": "1.1.2",
-  "description": "Make and finish video: routes to Remotion, Hyperframes, footage editing, or AI-clip repair and assembly; shared voice, music, captions and loudness; pre-delivery QA script.",
+  "version": "1.2.0",
+  "description": "Make and finish video: routes to Remotion, Hyperframes, footage editing, AI-clip repair and assembly, or a music video built on a local song listener; shared voice, music, captions and loudness; pre-delivery QA and sync checks.",
   "author": {
     "name": "ECamposSoria"
   },

@@ -1,0 +1,21 @@
+# The laptop's WSL Docker (RTX 4070, NVIDIA runtime). Same one-shot use as docker-compose.yml:
+# `docker compose -p listener -f docker-compose.gpu.yml run --rm ...` (see README.md).
+name: listener
+services:
+  listener:
+    build:
+      context: .
+      args:
+        TORCH_FLAVOR: cu128
+    image: video-studio-listener:0.1.0-cu128
+    restart: "no"
+    user: "1000:1000"
+    gpus: all
+    mem_limit: 12g
+    environment:
+      LISTEN_THREADS: "8"
+    volumes:
+      - listener-models:/models
+volumes:
+  listener-models:
+    name: listener-models

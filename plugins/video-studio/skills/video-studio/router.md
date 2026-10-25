@@ -2,6 +2,16 @@
 
 Walk the gates in order. The first match wins.
 
+## Gate 0: is a song the spine?
+
+A music video, a visualizer, a lyric video, or footage or AI clips cut to a track, where the picture follows the
+song's beats and sections and the song plays unchanged.
+
+- Yes → **music-video**. It listens to the song first, then builds the picture from motion graphics, AI clips or
+  footage (it borrows the other legs for that).
+- A voiceover-led piece with a music bed underneath → not this gate; the bed is the audio leg's job.
+- No → Gate 1.
+
 ## Gate 1: is there real footage to cut?
 
 A clip the user already has (talking head, screen recording, phone video, demo capture).
@@ -56,10 +66,11 @@ A landing page, component, CodePen, HTML email, Stitch or Claude artifact they w
 | "story from these event photos", kinetic type, captions-first social cut | animation-hyperframes |
 | "promo / product teaser / animated explainer", React components | animation-remotion |
 | "add a voiceover / music / captions / dub it" to an existing video | the audio leg on its own |
+| "music video / visualizer / lyric video for this song", "cut these clips to the beat" | music-video |
 | a pasted reel or YouTube link, "make one like this" | Step 0 first, then route |
 
 ## Considered and not adopted (2026-10-24)
 
 OpenMontage (full agentic studio, AGPL: we borrowed its pre-delivery checks instead), `/brag` (same job as
 `hyperframes:product-launch-video`), ManimGX (math/3D explainer engine, v0.1, untested without a GPU) and the
-Hainrixz motion/editor agents. Reasons in project memory `image-video-generation/reference_reel_tools_eval_2026-10.md`.
+Hainrixz motion/editor agents. Reasons in the shared media memory, `~/projects/image-video-generation/memory/reference_reel_tools_eval_2026-10.md`.

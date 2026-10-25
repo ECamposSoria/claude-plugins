@@ -1,0 +1,205 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pytest>=8", "numpy>=1.24"]
+# ///
+"""Synthetic music-video checks: uv run --with pytest python -m pytest test_sync_check.py."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import subprocess
+import sys
+import wave
+
+import numpy as np
+import pytest
+
+
+SCRIPT = Path(__file__).with_name("sync_check.py")
+SPEC = importlib.util.spec_from_file_location("sync_check", SCRIPT)
+sync = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+sys.modules["sync_check"] = sync
+SPEC.loader.exec_module(sync)
+
+
+def write_wav(path: Path, audio: np.ndarray, sr: int = 44100) -> None:
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(sr)
+        output.writeframes(np.round(np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
+
+
+@pytest.fixture
+def song(tmp_path: Path) -> dict:
+    sr = 44100
+    rng = np.random.default_rng(0)
+    audio = rng.normal(0, .01, sr * 12)
+    beats = np.arange(.5, 12, .5)
+    burst = .7 * np.sin(2 * np.pi * 1000 * np.arange(round(.005 * sr)) / sr)
+    for beat in beats:
+        start = round(beat * sr)
+        audio[start:start + len(burst)] += burst
+    path = tmp_path / "song.wav"
+    noise = tmp_path / "noise.wav"
+    write_wav(path, audio)
+    write_wav(noise, rng.normal(0, .1, sr * 12))
+    analysis = {"schema": 1, "beats": beats.tolist(), "downbeats": np.arange(2, 12, 2).tolist(),
+                "drums": {"hits": [{"t": float(t), "type": "kick", "strength": 1.0} for t in beats]},
+                "source": {"duration_sec": 12.0, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}}
+    analysis_path = tmp_path / "analysis.json"
+    analysis_path.write_text(json.dumps(analysis), encoding="utf-8")
+    return {"path": path, "noise": noise, "analysis": analysis_path, "beats": beats}
+
+
+def make_video(path: Path, song: dict, lag: int = 0, duration: float = 12,
+               audio: Path | None = None, audio_filter: str | None = None, silent: bool = False) -> None:
+    frames = []
+    changes = {round(beat * 30) + lag for beat in song["beats"]}
+    colour = 0
+    palette = [(25, 25, 25), (225, 225, 225), (60, 60, 60), (180, 180, 180)]
+    for index in range(round(duration * 30)):
+        if index in changes:
+            colour = (colour + 1) % len(palette)
+        frame = np.empty((180, 320, 3), dtype=np.uint8)
+        frame[:] = palette[colour]
+        frames.append(frame.tobytes())
+    command = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-threads", "1", "-filter_threads", "1",
+               "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "320x180", "-r", "30", "-i", "pipe:0"]
+    if not silent:
+        command += ["-i", str(audio or song["path"])]
+    command += ["-map", "0:v:0", "-c:v", "libx264", "-threads", "1", "-pix_fmt", "yuv420p", "-crf", "18"]
+    if not silent:
+        command += ["-map", "1:a:0", "-c:a", "aac", "-ar", "48000"]
+        if audio_filter:
+            command += ["-af", audio_filter]
+    command += ["-t", str(duration), str(path)]
+    result = subprocess.run(command, input=b"".join(frames), capture_output=True, timeout=60 + 2 * duration)
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+
+
+def check(video: Path, song: dict, audio: Path | None = None) -> tuple[int, dict]:
+    command = [sys.executable, str(SCRIPT), str(video), "--song", str(song["analysis"]),
+               "--audio", str(audio or song["path"]), "--json"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=84)
+    assert result.stdout, result.stderr
+    return result.returncode, json.loads(result.stdout)
+
+
+def test_aligned(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "aligned.mp4"
+    make_video(video, song)
+    code, result = check(video, song)
+    assert code == 0
+    assert not any(f["level"] in ("FAIL", "WARN") for f in result["findings"]), result
+    assert len(result["stats"]["audio_windows"]) == 3
+    for window in result["stats"]["audio_windows"]:
+        assert abs(window["lag_ms"]) <= 500 / 30
+        assert window["correlation"] >= .9
+    assert result["stats"]["accents"] == 23
+    assert result["stats"]["within_1_frame"] == 1
+    assert result["stats"]["downbeat_coverage"] == 1
+
+
+def test_audio_delayed(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "delayed.mp4"
+    make_video(video, song, audio_filter="adelay=200:all=1,atrim=duration=12")
+    code, result = check(video, song)
+    assert code == 1
+    assert any(f["check"] == "audio-match" and f["level"] == "FAIL" and "audio offset +" in f["message"] for f in result["findings"])
+    for window in result["stats"]["audio_windows"]:
+        assert window["lag_ms"] == pytest.approx(200, abs=10)
+
+
+def test_audio_replaced(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "noise.mp4"
+    make_video(video, song, audio=song["noise"])
+    code, result = check(video, song)
+    assert code == 1
+    assert any(f["check"] == "audio-match" and f["level"] == "FAIL" and "not the song" in f["message"] for f in result["findings"])
+
+
+def test_picture_late(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "late-picture.mp4"
+    make_video(video, song, lag=3)
+    code, result = check(video, song)
+    assert code == 0
+    assert result["stats"]["median_offset_frames"] == pytest.approx(3, abs=.5)
+    assert any(f["check"] == "accents" and f["level"] == "WARN" and "late" in f["message"] for f in result["findings"])
+    assert not any(f["level"] == "FAIL" for f in result["findings"])
+
+
+def test_short_video(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "short.mp4"
+    make_video(video, song, duration=11)
+    code, result = check(video, song)
+    assert code == 1
+    assert any(f["check"] == "duration" and f["level"] == "FAIL" for f in result["findings"])
+
+
+def test_wrong_song_file(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "wrong-file.mp4"
+    make_video(video, song)
+    code, result = check(video, song, audio=song["noise"])
+    assert code == 1
+    assert any(f["check"] == "song-file" and f["level"] == "FAIL" and f["message"] == "the analysis is for a different file" for f in result["findings"])
+
+
+def test_no_audio(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "silent.mp4"
+    make_video(video, song, silent=True)
+    code, result = check(video, song)
+    assert code == 1
+    assert any(f["check"] == "audio" and f["level"] == "FAIL" for f in result["findings"])
+
+
+def test_audio_level_change(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "quieter.mp4"
+    make_video(video, song, audio_filter="volume=-6dB")
+    code, result = check(video, song)
+    assert code == 0
+    assert not any(f["level"] == "FAIL" for f in result["findings"]), result
+    assert any(f["check"] == "audio-match" and f["level"] == "WARN" and "audio level changed" in f["message"] for f in result["findings"])
+    for window in result["stats"]["audio_windows"]:
+        assert window["level_db"] == pytest.approx(-6, abs=.5)
+
+
+def test_usage_errors(tmp_path: Path, song: dict) -> None:
+    video = tmp_path / "placeholder.mp4"
+    video.write_bytes(b"")
+    assert sync.main([str(tmp_path / "missing.mp4"), "--song", str(song["analysis"])]) == 2
+    assert sync.main([str(video), "--song", str(song["analysis"]), "--audio", "missing.wav"]) == 2
+    bad = tmp_path / "bad.json"
+    for content in ("not json", '{"schema":2}', '{"schema":1}', "[]"):
+        bad.write_text(content)
+        assert sync.main([str(video), "--song", str(bad)]) == 2
+
+
+def test_offset_sign_and_drift() -> None:
+    song = np.random.default_rng(0).normal(size=8000 * 12)
+    video = np.concatenate([np.r_[np.zeros(delay), song[start:start + 32000 - delay]]
+                            for start, delay in [(0, 800), (32000, 1600), (64000, 2400)]])
+    findings, windows = sync.audio_match(video, song, 12, 30)
+    assert [w["lag_ms"] for w in windows] == pytest.approx([100, 200, 300], abs=.125)
+    assert any("drift" in f.message for f in findings)
+    lag, correlation, _ = sync.correlate_window(song[800:32000], song[:31200])
+    assert lag == pytest.approx(-100, abs=.125)
+    assert correlation >= .99
+
+
+def test_few_accents_and_no_events() -> None:
+    analysis = {"beats": [1.0], "downbeats": [1.0], "drums": {"hits": []}}
+    diffs = [0.0] * 90
+    diffs[30] = .5
+    findings, stats = sync.accent_check(diffs, 30, analysis, 6)
+    assert findings[0].level == "INFO"
+    assert "too few visual accents" in findings[0].message
+    assert stats["downbeat_coverage"] == 1
+    assert stats["median_offset_frames"] == 0
+    analysis["beats"] = []
+    findings, _ = sync.accent_check(diffs, 30, analysis, 6)
+    assert not any(f.level == "FAIL" for f in findings)

@@ -1,7 +1,7 @@
 ---
 name: video-studio
-description: Use when the user wants a video made, edited or finished — cutting or tightening a recording, assembling AI-generated clips into a reel, promo or explainer animation, captions or subtitles, a voiceover or music bed, dubbing, repairing a generated clip that pops or mangles lettering, or "make one like this" from a pasted reel or YouTube link. Invoke with /video. Generating the clips or images themselves belongs to image-gen.
-allowed-tools: Bash(npm:*), Bash(npx:*), Bash(ffmpeg:*), Bash(ffprobe:*), Bash(python3:*), Bash(uv:*), Bash(bash:*), Bash(git:*), Bash(ls:*), Bash(cp:*), Bash(mkdir:*), Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill
+description: Use when the user wants a video made, edited or finished — a music video, visualizer or lyric video for a song, cutting or tightening a recording, assembling AI-generated clips into a reel, promo or explainer animation, captions or subtitles, a voiceover or music bed, dubbing, repairing a generated clip that pops or mangles lettering, or "make one like this" from a pasted reel or YouTube link. Invoke with /video. Generating the clips or images themselves belongs to image-gen.
+allowed-tools: Bash(npm:*), Bash(npx:*), Bash(ffmpeg:*), Bash(ffprobe:*), Bash(python3:*), Bash(uv:*), Bash(bash:*), Bash(docker:*), Bash(ssh:*), Bash(git:*), Bash(ls:*), Bash(cp:*), Bash(mkdir:*), Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill
 ---
 
 # Video Studio
@@ -15,6 +15,9 @@ A pasted reel, Short, TikTok or YouTube link ("make one like this") → invoke t
 handles public Instagram reels: frames plus a Whisper transcript), then
 write a five-line brief before routing: hook length, average shot length, caption style, music energy, and
 what to keep versus change for our brand. Copy structure, never content.
+
+Costs, provider choices and tool traps from earlier pieces are in the shared media memory,
+`~/projects/image-video-generation/memory/README.md`: read it before generating or rendering.
 
 When the video is for a brand, read that brand's notes in `~/projects/uniteapp/memory/marketing/<brand>/`
 (palette, typography) and take logos from `/mnt/hgfs/vm-share/projects memory/company/brand-assets/` or the
@@ -32,6 +35,7 @@ say what we start from. Announce the route in one line.
 | footage-edit | [legs/footage-edit.md](legs/footage-edit.md) | `faster-whisper` + `ffmpeg` |
 | ai-footage | [legs/ai-footage.md](legs/ai-footage.md) | clips from `nano-banana-multi:image-gen` (fal), repaired and assembled here |
 | hybrid | "Hybrid assembly" below | footage or AI clips + animation + `composite.sh` |
+| music-video | [legs/music-video.md](legs/music-video.md) | the song listener (`listen.py`), then Hyperframes, AI clips or footage cut on its beat grid; `sync_check.py` |
 
 Voice, music, captions and loudness are shared by every route: [legs/audio.md](legs/audio.md).
 
@@ -87,5 +91,8 @@ h264 + yuv420p + AAC 48 kHz, loudness −14 LUFS / −1.5 dBTP (see the audio le
   renders with more than 4 workers: the VM has hard memory ceilings.
 - **Processing stays local** (cuts, renders, QA). Generation and voice may call paid or cloud services: fal and
   Gemini through image-gen, ElevenLabs and HeyGen's free path in the audio leg. Quote the cost first.
+- **GPU when a job needs it.** Voice (VoiceStudio) and song analysis (`listen_remote.sh`) run on the laptop's
+  RTX 4070 when it is free; check `nvidia-smi` there first and ask the owner if another session holds it. The VM's
+  CPU is the fallback, not the default, for those.
 - **Reuse, don't reimplement.** Remotion goes through `promo-video`, Hyperframes through its own skills.
 - **Correctness over speed.** Re-encode at edit points, keep fps and sample rate explicit, verify each stage.

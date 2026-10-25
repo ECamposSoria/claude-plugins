@@ -16,7 +16,7 @@ The `hyperframes` plugin is installed and owns the authoring rules. Invoke by na
 | Word-by-word captions | `hyperframes:embedded-captions` |
 | Product launch from a site or repo | `hyperframes:product-launch-video`, `hyperframes:pr-to-video` |
 | Re-cut a talking-head recording | `hyperframes:talking-head-recut` |
-| Cut to a music track | `hyperframes:music-to-video` |
+| A short lyric or kinetic-type cut to a track | `hyperframes:music-to-video` (a full music video goes to [music-video.md](music-video.md)) |
 
 The CLI runs via `npx hyperframes`. Pin the version per project (`npx hyperframes@<ver>`) and write it in the
 project README so a re-render months later produces the same frames. Last version rendered on this VM:

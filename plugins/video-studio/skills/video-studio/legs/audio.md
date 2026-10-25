@@ -88,6 +88,15 @@ script sentence by sentence, which is ~1.5x faster than one long block; the defa
 fastest (raising `num_step` only slows it). Other routes: `GET /profiles`, `DELETE /profiles/<id>`,
 `/v1/audio/speech` (OpenAI-compatible), and an MCP server at `http://127.0.0.1:3900/mcp/`.
 
+## Listening to a song (analysis, not playback)
+
+You cannot hear audio. For a song that drives the picture (a music video, a beat-cut montage), run the listener
+first: `scripts/listen.py` in its container on the VM, or `scripts/listen_remote.sh` for the laptop GPU (see
+[../setup/listener/README.md](../setup/listener/README.md)). It writes a `README.md` song brief (tempo, meter,
+key, sections, loud and quiet parts, drum patterns, timed lyrics), `analysis.json`, per-frame `features.json` and
+separated stems. The music-video leg ([music-video.md](music-video.md)) is built on it. For a voiceover,
+`transcribe.py` is still the tool: the listener's lyrics are for sung vocals.
+
 ## Music
 
 - **ElevenLabs Music API**: `POST https://api.elevenlabs.io/v1/music` with `{"prompt": ..., "music_length_ms": ...}`
@@ -117,6 +126,9 @@ bash "$SKILL/scripts/composite.sh" mixaudio --video with_voice.mp4 --music bed.m
 Never attach with `-shortest` alone: when the voice is shorter than the picture, it cuts the picture.
 
 ## Loudness: −14 LUFS integrated, −1.5 dBTP true peak
+
+Exception: a music video keeps the song exactly as mastered (no `loudnorm`, no fades). Pass the song's own
+loudness to QA instead: `qa_render.py --loudness-target <analysis.json source.integrated_lufs>`.
 
 ```bash
 ffmpeg -i mixed.mp4 -c:v copy -af "loudnorm=I=-14:TP=-1.5:LRA=11" -ar 48000 -c:a aac -b:a 192k final.mp4

@@ -1,0 +1,22 @@
+# One-shot tool, not a service: run with `docker compose -p listener -f <this file> run --rm ...`
+# (see README.md). No ports and no healthcheck: the container exits when the analysis is written.
+name: listener
+services:
+  listener:
+    build:
+      context: .
+      args:
+        TORCH_FLAVOR: cpu
+    image: video-studio-listener:0.1.0
+    restart: "no"
+    user: "1000:1000"
+    mem_limit: 5g
+    cpus: 8
+    environment:
+      OMP_NUM_THREADS: "8"
+      LISTEN_THREADS: "8"
+    volumes:
+      - listener-models:/models
+volumes:
+  listener-models:
+    name: listener-models
