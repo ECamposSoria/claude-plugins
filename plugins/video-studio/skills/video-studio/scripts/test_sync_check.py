@@ -247,6 +247,18 @@ def test_whole_song_is_compared() -> None:
     assert sync._windows(3.0) == [(0.0, 3.0)]
 
 
+def test_local_gain_change_is_reported() -> None:
+    song = np.random.default_rng(0).normal(size=8000 * 120)
+    video = song.copy()
+    video[8000 * 24:8000 * 28] *= 10 ** (-20 / 20)
+    findings, _ = sync.audio_match(video, song, 120, 30)
+    assert not any(f.level == "FAIL" for f in findings)
+    warnings = [f for f in findings if f.level == "WARN"]
+    assert len(warnings) == 1
+    assert "audio level changed in 1 of 30 windows (up to -20.0 dB at 0:24.0)" in warnings[0].message
+    assert warnings[0].t == 24
+
+
 def test_few_accents_and_no_events() -> None:
     analysis = {"beats": [1.0], "downbeats": [1.0], "drums": {"hits": []}}
     diffs = [0.0] * 90

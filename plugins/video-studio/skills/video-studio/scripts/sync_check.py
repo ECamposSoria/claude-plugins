@@ -190,10 +190,12 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
         findings.append(Finding("FAIL", "audio-match", f"audio offset {lags[0]:+.1f} ms at {format_time(shifted[0]['t'])} "
                                 f"({len(shifted)} of {total} windows, {min(lags):+.1f} to {max(lags):+.1f} ms)"
                                 + ("; drift across windows" if drift else ""), shifted[0]["t"]))
-    if matched:
-        level = float(np.median([w["level_db"] for w in matched]))
-        if abs(level) > 1:
-            findings.append(Finding("WARN", "audio-match", f"audio level changed by {level:+.1f} dB (normalised or remixed?)"))
+    changed = [w for w in matched if abs(w["level_db"]) > 1]
+    if changed:
+        biggest = max(changed, key=lambda w: abs(w["level_db"]))
+        findings.append(Finding("WARN", "audio-match", f"audio level changed in {len(changed)} of {total} windows (up to "
+                                f"{biggest['level_db']:+.1f} dB at {format_time(biggest['t'])}), at {where(changed)}: "
+                                "normalised, ducked or remixed?", changed[0]["t"]))
     if not findings and not measured:
         findings.append(Finding("INFO", "audio-match", "song and video are silent in every window; correlation not measured"))
     elif not any(f.level == "FAIL" for f in findings):
