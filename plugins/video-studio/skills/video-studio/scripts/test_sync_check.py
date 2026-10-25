@@ -319,6 +319,11 @@ def test_stereo_edge_cases() -> None:
     findings, windows = sync.audio_match(antiphase.copy(), antiphase, 12.124, 30)
     assert not any(f.level in ("FAIL", "WARN") for f in findings)
     assert [w["basis"] for w in windows] == ["side"] * 3
+    noise = 3 * rng.normal(size=len(a))
+    findings, windows = sync.audio_match(antiphase + noise[:, None], antiphase, 12.124, 30)
+    failures = [f for f in findings if f.level == "FAIL"]
+    assert len(failures) == 1 and "mono content the song lacks in 3 of 3 windows" in failures[0].message
+    assert [w["added"] for w in windows] == ["mid"] * 3
     muted = antiphase.copy()
     muted[8000 * 4:8000 * 8] = 0
     findings, _ = sync.audio_match(muted, antiphase, 12.124, 30)

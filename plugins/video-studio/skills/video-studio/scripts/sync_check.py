@@ -196,16 +196,21 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
             continue
         # Match on the side only where the mid has cancelled (antiphase); wide stereo still matches on the mid.
         basis = "side" if stereo and _rms_db(s_mid) < _rms_db(s_side) - 20 else "mid"
-        lag, correlation, db = correlate_window(*((v_side, s_side) if basis == "side" else (v_mid, s_mid)))
-        side = side_db = extra_side = None
-        if stereo and basis == "mid" and _rms_db(s_side) - _rms_db(s_mid) > -30:
-            aligned_video, aligned_song = _align(v_side, s_side, round(lag * 8))
-            side, side_db = _pearson(aligned_video, aligned_song), _rms_db(aligned_video) - _rms_db(aligned_song)
-        elif stereo and basis == "mid" and _rms_db(v_side) - _rms_db(v_mid) > -30:
-            # The song has no stereo content here, so side energy in the video was added (it cancels in the mid).
-            extra_side = _rms_db(v_side) - _rms_db(v_mid)
-        windows.append({"t": start, "end": end, "lag_ms": lag, "correlation": correlation, "level_db": db, "basis": basis,
-                        "side_correlation": side, "side_db": side_db, "extra_side_db": extra_side, "silent": None})
+        (p_video, p_song), (q_video, q_song) = ((v_side, s_side), (v_mid, s_mid)) if basis == "side" else ((v_mid, s_mid), (v_side, s_side))
+        lag, correlation, db = correlate_window(p_video, p_song)
+        other = "mid" if basis == "side" else "side"
+        row = {"t": start, "end": end, "lag_ms": lag, "correlation": correlation, "level_db": db, "basis": basis,
+               "side_correlation": None, "side_db": None, "mid_correlation": None, "mid_db": None, "added": None,
+               "added_db": None, "silent": None}
+        # The signal not matched on must agree too: where the song has it, by correlation and level; where the
+        # song has none, any energy in the video was added (it cancels in the signal that was matched).
+        if stereo and _rms_db(q_song) - _rms_db(p_song) > -30:
+            aligned_video, aligned_song = _align(q_video, q_song, round(lag * 8))
+            row[f"{other}_correlation"] = _pearson(aligned_video, aligned_song)
+            row[f"{other}_db"] = _rms_db(aligned_video) - _rms_db(aligned_song)
+        elif stereo and _rms_db(q_video) - _rms_db(p_video) > -30:
+            row["added"], row["added_db"] = other, _rms_db(q_video) - _rms_db(p_video)
+        windows.append(row)
     findings = []
     total = len(windows)
 
@@ -231,24 +236,30 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
         findings.append(Finding("FAIL", "audio-match", f"audio offset {lags[0]:+.1f} ms at {format_time(shifted[0]['t'])} "
                                 f"({len(shifted)} of {total} windows, {min(lags):+.1f} to {max(lags):+.1f} ms)"
                                 + ("; drift across windows" if drift else ""), shifted[0]["t"]))
-    image = [w for w in matched if w.get("side_correlation") is not None and w["side_correlation"] < .8]
+    def secondary(w: dict, key: str) -> float | None:
+        return w.get(f"side_{key}") if w.get(f"side_{key}") is not None else w.get(f"mid_{key}")
+
+    image = [w for w in matched if secondary(w, "correlation") is not None and secondary(w, "correlation") < .8]
     if image:
-        lowest = min(image, key=lambda w: w["side_correlation"])
+        lowest = min(image, key=lambda w: secondary(w, "correlation"))
         findings.append(Finding("FAIL", "audio-match", f"the stereo image differs from the song in {len(image)} of {total} windows "
-                                f"(side correlation {lowest['side_correlation']:.2f} at {format_time(lowest['t'])}), at {where(image)}: "
+                                f"({'side' if lowest['side_correlation'] is not None else 'mid'} correlation "
+                                f"{secondary(lowest, 'correlation'):.2f} at {format_time(lowest['t'])}), at {where(image)}: "
                                 "channels swapped, folded to mono or remixed?", image[0]["t"]))
-    added = [w for w in matched if w.get("extra_side_db") is not None]
-    if added:
-        loudest = max(added, key=lambda w: w["extra_side_db"])
-        findings.append(Finding("FAIL", "audio-match", f"the video's audio has stereo content the song lacks in {len(added)} of {total} "
-                                f"windows (side {loudest['extra_side_db']:+.1f} dB of the mid at {format_time(loudest['t'])}), at {where(added)}: "
-                                "noise or effects added?", added[0]["t"]))
-    width = [w for w in matched if w.get("side_db") is not None and w["side_correlation"] >= .8 and abs(w["side_db"]) > 2]
+    for signal, kind in (("side", "stereo"), ("mid", "mono")):
+        added = [w for w in matched if w.get("added") == signal]
+        if added:
+            loudest = max(added, key=lambda w: w["added_db"])
+            reference = "mid" if signal == "side" else "side"
+            findings.append(Finding("FAIL", "audio-match", f"the video's audio has {kind} content the song lacks in {len(added)} of {total} "
+                                    f"windows ({signal} {loudest['added_db']:+.1f} dB of the {reference} at {format_time(loudest['t'])}), "
+                                    f"at {where(added)}: noise or effects added?", added[0]["t"]))
+    width = [w for w in matched if secondary(w, "db") is not None and secondary(w, "correlation") >= .8 and abs(secondary(w, "db")) > 2]
     if width:
-        biggest = max(width, key=lambda w: abs(w["side_db"]))
-        findings.append(Finding("WARN", "audio-match", f"stereo width changed in {len(width)} of {total} windows (side up to "
-                                f"{biggest['side_db']:+.1f} dB at {format_time(biggest['t'])}), at {where(width)}: "
-                                "widened, narrowed or remixed?", width[0]["t"]))
+        biggest = max(width, key=lambda w: abs(secondary(w, "db")))
+        findings.append(Finding("WARN", "audio-match", f"stereo width changed in {len(width)} of {total} windows "
+                                f"({'side' if biggest['side_db'] is not None else 'mid'} up to {secondary(biggest, 'db'):+.1f} dB at "
+                                f"{format_time(biggest['t'])}), at {where(width)}: widened, narrowed or remixed?", width[0]["t"]))
     changed = [w for w in matched if abs(w["level_db"]) > 1]
     if changed:
         biggest = max(changed, key=lambda w: abs(w["level_db"]))
