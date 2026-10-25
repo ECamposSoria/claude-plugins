@@ -104,13 +104,28 @@ def load_analysis(path: str | Path) -> dict:
     return analysis
 
 
-def decode_mono(path: str | Path, duration: float) -> np.ndarray:
+def decode_stereo(path: str | Path, duration: float) -> np.ndarray:
+    # (samples, 2) at 8 kHz; a mono source comes back with two equal channels.
     result = _run(["ffmpeg", "-nostdin", "-v", "error", "-threads", "1", "-filter_threads", "1",
-                   "-i", str(path), "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "8000", "-f", "f32le", "-"], duration)
+                   "-i", str(path), "-map", "0:a:0", "-vn", "-ac", "2", "-ar", "8000", "-f", "f32le", "-"], duration)
     audio = np.frombuffer(result.stdout, dtype="<f4").astype(np.float64)
-    if not audio.size or not np.isfinite(audio).all():
+    if not audio.size or audio.size % 2 or not np.isfinite(audio).all():
         raise ValueError("empty or invalid audio decode")
-    return audio
+    return audio.reshape(-1, 2)
+
+
+def _align(video: np.ndarray, song: np.ndarray, lag: int) -> tuple[np.ndarray, np.ndarray]:
+    if lag > 0:
+        return video[lag:], song[:-lag]
+    if lag < 0:
+        return video[:lag], song[-lag:]
+    return video, song
+
+
+def _pearson(a: np.ndarray, b: np.ndarray) -> float:
+    a, b = a - a.mean(), b - b.mean()
+    norm = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(np.dot(a, b) / norm) if norm > 1e-20 else 0.0
 
 
 def correlate_window(video: np.ndarray, song: np.ndarray, sr: int = 8000) -> tuple[float, float, float]:
@@ -124,15 +139,8 @@ def correlate_window(video: np.ndarray, song: np.ndarray, sr: int = 8000) -> tup
     limit = min(sr, count - 2)
     lags = np.arange(-limit, limit + 1)
     lag = int(lags[int(np.argmax(correlation[lags % size]))])
-    if lag > 0:
-        aligned_video, aligned_song = video[lag:], song[:-lag]
-    elif lag < 0:
-        aligned_video, aligned_song = video[:lag], song[-lag:]
-    else:
-        aligned_video, aligned_song = video, song
-    a, b = aligned_video - aligned_video.mean(), aligned_song - aligned_song.mean()
-    norm = float(np.linalg.norm(a) * np.linalg.norm(b))
-    pearson = float(np.dot(a, b) / norm) if norm > 1e-20 else 0.0
+    aligned_video, aligned_song = _align(video, song, lag)
+    pearson = _pearson(aligned_video, aligned_song)
     rms_a = float(np.mean(aligned_video ** 2))
     rms_b = float(np.mean(aligned_song ** 2))
     db = 10 * math.log10(max(rms_a, 1e-20) / max(rms_b, 1e-20))
@@ -153,6 +161,13 @@ def _windows(duration: float, width: float = 4.0) -> list[tuple[float, float]]:
 
 
 def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float) -> tuple[list[Finding], list[dict]]:
+    # Timing and identity come from the mid signal; with two channels the side signal (L - R) also has to
+    # match, because a channel swap or a fold-down to mono leaves the mid untouched.
+    stereo = video.ndim == 2 and song.ndim == 2
+    video_side = video[:, 0] - video[:, 1] if stereo else None
+    song_side = song[:, 0] - song[:, 1] if stereo else None
+    video = video.mean(axis=1) if video.ndim == 2 else video
+    song = song.mean(axis=1) if song.ndim == 2 else song
     # Contiguous windows over the whole song: sampled windows let a replaced middle pass.
     windows = []
     for start, end in _windows(duration):
@@ -164,7 +179,11 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
                             "silent": "both" if video_silent and song_silent else "video" if video_silent else "song"})
             continue
         lag, correlation, db = correlate_window(video[lo:hi], song[lo:hi])
-        windows.append({"t": start, "end": end, "lag_ms": lag, "correlation": correlation, "level_db": db, "silent": None})
+        side = None
+        if stereo and _rms_db(song_side[lo:hi]) - _rms_db(song[lo:hi]) > -30:
+            side = _pearson(*_align(video_side[lo:hi], song_side[lo:hi], round(lag * 8)))
+        windows.append({"t": start, "end": end, "lag_ms": lag, "correlation": correlation, "level_db": db,
+                        "side_correlation": side, "silent": None})
     findings = []
     total = len(windows)
 
@@ -190,6 +209,12 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
         findings.append(Finding("FAIL", "audio-match", f"audio offset {lags[0]:+.1f} ms at {format_time(shifted[0]['t'])} "
                                 f"({len(shifted)} of {total} windows, {min(lags):+.1f} to {max(lags):+.1f} ms)"
                                 + ("; drift across windows" if drift else ""), shifted[0]["t"]))
+    image = [w for w in matched if w.get("side_correlation") is not None and w["side_correlation"] < .8]
+    if image:
+        lowest = min(image, key=lambda w: w["side_correlation"])
+        findings.append(Finding("FAIL", "audio-match", f"the stereo image differs from the song in {len(image)} of {total} windows "
+                                f"(side correlation {lowest['side_correlation']:.2f} at {format_time(lowest['t'])}), at {where(image)}: "
+                                "channels swapped, folded to mono or remixed?", image[0]["t"]))
     changed = [w for w in matched if abs(w["level_db"]) > 1]
     if changed:
         biggest = max(changed, key=lambda w: abs(w["level_db"]))
@@ -318,13 +343,22 @@ def run_checks(args: argparse.Namespace, analysis: dict) -> dict:
             matches = _sha256(args.audio) == analysis["source"]["sha256"]
             findings.append(Finding("PASS" if matches else "FAIL", "song-file", "song SHA-256 matches" if matches else "the analysis is for a different file"))
             if audio:
-                video_audio = decode_mono(args.video, duration)
-                song_audio = decode_mono(args.audio, duration)
+                song_stream = next((s for s in json.loads(_run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", args.audio],
+                                                                duration).stdout).get("streams", []) if s.get("codec_type") == "audio"), {})
+                song_channels, video_channels = int(song_stream.get("channels") or 0), int(audio.get("channels") or 0)
+                if song_channels >= 2 and video_channels == 1:
+                    findings.append(Finding("FAIL", "audio-layout", f"the song has {song_channels} channels but the video's audio is mono"))
+                elif song_channels == 1 and video_channels >= 2:
+                    findings.append(Finding("INFO", "audio-layout", f"the song is mono; the video's audio has {video_channels} channels"))
+                video_audio = decode_stereo(args.video, duration)
+                song_audio = decode_stereo(args.audio, duration)
+                if song_channels == 1 or video_channels == 1:
+                    video_audio, song_audio = video_audio.mean(axis=1), song_audio.mean(axis=1)
                 # Picture time zero is the first video frame; containers offset either stream from it
                 # (an MKV remux starts the video at 0.021 s to cover AAC priming).
                 start = (_number(audio.get("start_time")) or 0.0) - (_number(video.get("start_time")) or 0.0)
                 if start > 0:
-                    video_audio = np.pad(video_audio, (round(start * 8000), 0))
+                    video_audio = np.pad(video_audio, [(round(start * 8000), 0)] + [(0, 0)] * (video_audio.ndim - 1))
                 elif start < 0:
                     video_audio = video_audio[round(-start * 8000):]
                 checks, windows = audio_match(video_audio, song_audio, duration, fps)

@@ -28,7 +28,7 @@ SPEC.loader.exec_module(sync)
 
 def write_wav(path: Path, audio: np.ndarray, sr: int = 44100) -> None:
     with wave.open(str(path), "wb") as output:
-        output.setnchannels(1)
+        output.setnchannels(audio.shape[1] if audio.ndim == 2 else 1)
         output.setsampwidth(2)
         output.setframerate(sr)
         output.writeframes(np.round(np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
@@ -257,6 +257,49 @@ def test_local_gain_change_is_reported() -> None:
     assert len(warnings) == 1
     assert "audio level changed in 1 of 30 windows (up to -20.0 dB at 0:24.0)" in warnings[0].message
     assert warnings[0].t == 24
+
+
+def test_stereo_image_is_checked() -> None:
+    rng = np.random.default_rng(0)
+    a, b = rng.normal(size=8000 * 12), rng.normal(size=8000 * 12)
+    song = np.stack([a, .6 * a + .8 * b], axis=1)
+    findings, windows = sync.audio_match(song.copy(), song, 12, 30)
+    assert not any(f.level in ("FAIL", "WARN") for f in findings)
+    assert all(w["side_correlation"] == pytest.approx(1) for w in windows)
+    for altered in (song[:, ::-1], np.repeat(song.mean(axis=1, keepdims=True), 2, axis=1)):
+        findings, _ = sync.audio_match(altered.copy(), song, 12, 30)
+        failures = [f for f in findings if f.level == "FAIL"]
+        assert len(failures) == 1 and "stereo image differs from the song in 3 of 3 windows" in failures[0].message
+    near_mono = np.stack([a, a], axis=1)
+    findings, windows = sync.audio_match(near_mono[:, ::-1].copy(), near_mono, 12, 30)
+    assert not any(f.level == "FAIL" for f in findings)
+    assert all(w["side_correlation"] is None for w in windows)
+
+
+def test_stereo_file_swap_and_fold(tmp_path: Path, song: dict) -> None:
+    sr = 44100
+    rng = np.random.default_rng(1)
+    with wave.open(str(song["path"]), "rb") as source:
+        mono = np.frombuffer(source.readframes(source.getnframes()), dtype="<i2").astype(np.float64) / 32767
+    stereo = np.stack([mono, .5 * mono + rng.normal(0, .02, len(mono))], axis=1)
+    path = tmp_path / "stereo-song.wav"
+    write_wav(path, stereo, sr)
+    analysis = json.loads(song["analysis"].read_text())
+    analysis["source"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    stereo_song = {**song, "path": path, "analysis": tmp_path / "stereo-analysis.json"}
+    stereo_song["analysis"].write_text(json.dumps(analysis), encoding="utf-8")
+    cases = [("aligned", None, None), ("swapped", "pan=stereo|c0=c1|c1=c0", "stereo image differs"),
+             ("folded", "pan=mono|c0=0.5*c0+0.5*c1", "video's audio is mono")]
+    for name, audio_filter, expected in cases:
+        video = tmp_path / f"stereo-{name}.mp4"
+        make_video(video, stereo_song, audio_filter=audio_filter)
+        code, result = check(video, stereo_song)
+        failures = [f for f in result["findings"] if f["level"] == "FAIL"]
+        if expected is None:
+            assert code == 0 and not failures, result
+            assert all(w["side_correlation"] >= .9 for w in result["stats"]["audio_windows"])
+        else:
+            assert code == 1 and any(expected in f["message"] for f in failures), result
 
 
 def test_few_accents_and_no_events() -> None:
