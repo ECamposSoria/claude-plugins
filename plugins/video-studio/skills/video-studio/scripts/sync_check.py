@@ -204,6 +204,15 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
                "added_db": None, "silent": None}
         # The signal not matched on must agree too: where the song has it, by correlation and level; where the
         # song has none, any energy in the video was added (it cancels in the signal that was matched).
+        # A short dropout or insert barely moves a 4 s correlation: compare 250 ms stretches too. 30 dB keeps a
+        # dip (a level WARN) apart from audio that is gone or added.
+        aligned_video, aligned_song = _align(p_video, p_song, round(lag * 8))
+        frames = min(len(aligned_video), len(aligned_song)) // 2000
+        video_db = np.array([_rms_db(aligned_video[i * 2000:(i + 1) * 2000]) for i in range(frames)])
+        song_db = np.array([_rms_db(aligned_song[i * 2000:(i + 1) * 2000]) for i in range(frames)])
+        offset = max(lag, 0) / 1000
+        row["dropouts"] = [round(start + offset + i * .25, 2) for i in range(frames) if song_db[i] > -50 and video_db[i] < song_db[i] - 30]
+        row["inserts"] = [round(start + offset + i * .25, 2) for i in range(frames) if video_db[i] > -50 and video_db[i] > song_db[i] + 30]
         if stereo and _rms_db(q_song) - _rms_db(p_song) > -30:
             aligned_video, aligned_song = _align(q_video, q_song, round(lag * 8))
             row[f"{other}_correlation"] = _pearson(aligned_video, aligned_song)
@@ -246,6 +255,12 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
                                 f"({'side' if lowest['side_correlation'] is not None else 'mid'} correlation "
                                 f"{secondary(lowest, 'correlation'):.2f} at {format_time(lowest['t'])}), at {where(image)}: "
                                 "channels swapped, folded to mono or remixed?", image[0]["t"]))
+    for key, message in (("dropouts", "the video's audio drops out where the song plays"),
+                         ("inserts", "the video's audio has sound where the song is quiet")):
+        times = [t for w in matched for t in w.get(key, [])]
+        if times:
+            findings.append(Finding("FAIL", "audio-match", f"{message} in {len(times)} stretch{'es' if len(times) > 1 else ''} of 0.25 s, at "
+                                    + ", ".join(format_time(t) for t in times[:5]) + (" …" if len(times) > 5 else ""), times[0]))
     for signal, kind in (("side", "stereo"), ("mid", "mono")):
         added = [w for w in matched if w.get("added") == signal]
         if added:

@@ -271,10 +271,18 @@ def bar_patterns(hits: list[dict], bars: list[dict], beats_per_bar: int) -> list
     for bar in bars:
         result.append({**bar, "patterns": {kind: "." * steps for kind in ("kick", "snare", "hat")},
                        "counts": {kind: 0 for kind in ("kick", "snare", "hat", "perc")}})
+    # Steps are measured on a full bar: a pickup or a cut-short last bar would otherwise stretch its hits.
+    full = [b["end"] - b["start"] for b in bars if b["index"] >= 1][:-1] or [b["end"] - b["start"] for b in bars]
+    length = float(np.median(full)) if full else 0.0
     for hit in hits:
         for i, bar in enumerate(result):
             if bar["start"] <= hit["t"] < bar["end"] and bar["end"] > bar["start"]:
-                step = round((hit["t"] - bar["start"]) / (bar["end"] - bar["start"]) * steps)
+                if bar["index"] == 0:
+                    step = steps - round((bar["end"] - hit["t"]) / length * steps)   # a pickup leads into the downbeat
+                else:
+                    step = round((hit["t"] - bar["start"]) / length * steps)
+                if not 0 <= step <= steps:
+                    break
                 if step == steps:
                     if i + 1 == len(result):
                         break

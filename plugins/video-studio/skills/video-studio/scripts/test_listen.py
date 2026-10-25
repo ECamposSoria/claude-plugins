@@ -78,6 +78,12 @@ def test_bar_patterns() -> None:
     result = listen.bar_patterns([{"t": 2.49, "type": "kick"}], extended, 4)
     assert result[0]["counts"]["kick"] == 0
     assert result[1]["patterns"]["kick"] == "x..............."
+    partial = [{"index": 0, "start": 0.0, "end": .54, "beats": [.04]},
+               {"index": 1, "start": .54, "end": 2.54, "beats": []}, {"index": 2, "start": 2.54, "end": 4.54, "beats": []},
+               {"index": 3, "start": 4.54, "end": 5.54, "beats": []}]
+    result = listen.bar_patterns([{"t": .04, "type": "kick"}, {"t": 4.54, "type": "kick"}, {"t": 5.04, "type": "kick"}], partial, 4)
+    assert result[0]["patterns"]["kick"] == "............x..."
+    assert result[3]["patterns"]["kick"] == "x...x..........."
 
 
 def test_loudness_profile_and_hard_stop() -> None:

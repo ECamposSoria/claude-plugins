@@ -365,6 +365,22 @@ def test_audio_gap_and_mono_song_side(tmp_path: Path, song: dict) -> None:
     assert any(f["level"] == "FAIL" and "stereo content the song lacks" in f["message"] for f in result["findings"])
 
 
+def test_short_dropout(tmp_path: Path, song: dict) -> None:
+    sr = 44100
+    with wave.open(str(song["path"]), "rb") as source:
+        audio = np.frombuffer(source.readframes(source.getnframes()), dtype="<i2").astype(np.float64) / 32767
+    audio = audio.copy()
+    audio[round(5.0 * sr):round(5.5 * sr)] = 0
+    edited = tmp_path / "dropout.wav"
+    write_wav(edited, audio)
+    video = tmp_path / "dropout.mp4"
+    make_video(video, song, audio=edited)
+    code, result = check(video, song)
+    assert code == 1
+    failures = [f for f in result["findings"] if f["level"] == "FAIL"]
+    assert any("drops out where the song plays" in f["message"] and 5.0 <= f["t"] <= 5.25 for f in failures), result
+
+
 def test_few_accents_and_no_events() -> None:
     analysis = {"beats": [1.0], "downbeats": [1.0], "drums": {"hits": []}}
     diffs = [0.0] * 90
