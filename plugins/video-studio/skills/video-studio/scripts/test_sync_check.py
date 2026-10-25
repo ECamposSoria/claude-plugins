@@ -378,7 +378,16 @@ def test_short_dropout(tmp_path: Path, song: dict) -> None:
     code, result = check(video, song)
     assert code == 1
     failures = [f for f in result["findings"] if f["level"] == "FAIL"]
-    assert any("drops out where the song plays" in f["message"] and 5.0 <= f["t"] <= 5.25 for f in failures), result
+    # The reported time is the start of the first 250 ms stretch that contains the dropout.
+    assert any("drops out where the song plays" in f["message"] and 4.75 < f["t"] < 5.5 for f in failures), result
+    rng = np.random.default_rng(5)
+    song_audio = rng.normal(size=8000 * 12)
+    straddle = song_audio.copy()
+    straddle[round(5.05 * 8000):round(5.45 * 8000)] = 0
+    findings, _ = sync.audio_match(straddle, song_audio, 12, 30)
+    failures = [f for f in findings if f.level == "FAIL"]
+    assert len(failures) == 1 and "drops out where the song plays in 1 stretch of 0.25 s" in failures[0].message
+    assert 5.0 <= failures[0].t <= 5.1
 
 
 def test_few_accents_and_no_events() -> None:

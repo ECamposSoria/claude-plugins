@@ -72,7 +72,8 @@ def probe_source(path: str | Path) -> dict:
 
 
 def decode_audio(path: str | Path) -> tuple[np.ndarray, int]:
-    raw = _run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(path), "-map", "0:a:0",
+    # async=1 keeps a timestamp gap as silence; a plain decode drops it and shortens the song's timeline.
+    raw = _run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(path), "-map", "0:a:0", "-af", "aresample=async=1",
                 "-ac", "2", "-ar", "44100", "-f", "f32le", "-"]).stdout
     audio = np.frombuffer(raw, dtype="<f4")
     if not len(audio) or len(audio) % 2 or not np.isfinite(audio).all():
@@ -271,16 +272,31 @@ def bar_patterns(hits: list[dict], bars: list[dict], beats_per_bar: int) -> list
     for bar in bars:
         result.append({**bar, "patterns": {kind: "." * steps for kind in ("kick", "snare", "hat")},
                        "counts": {kind: 0 for kind in ("kick", "snare", "hat", "perc")}})
-    # Steps are measured on a full bar: a pickup or a cut-short last bar would otherwise stretch its hits.
     full = [b["end"] - b["start"] for b in bars if b["index"] >= 1][:-1] or [b["end"] - b["start"] for b in bars]
     length = float(np.median(full)) if full else 0.0
+    every_beat = sorted(t for b in bars for t in b.get("beats", []))
+    interval = float(np.median(np.diff(every_beat))) if len(every_beat) > 1 else length / max(beats_per_bar, 1)
+
+    def position(bar: dict, t: float) -> int:
+        # Each hit is placed against its own bar's beats (tempo can change bar to bar); a pickup's beats are the
+        # last ones before the downbeat. Only a bar without beats falls back to the song's full bar length.
+        beats = bar.get("beats") or []
+        if not beats:
+            if bar["index"] == 0:
+                return steps - round((bar["end"] - t) / length * steps)
+            return round((t - bar["start"]) / length * steps)
+        later = [b for b in every_beat if b > beats[-1]]
+        grid = list(beats) + [later[0] if later else beats[-1] + interval]
+        k = max(0, int(np.searchsorted(grid, t, side="right")) - 1)
+        k = min(k, len(grid) - 2)
+        fraction = (t - grid[k]) / max(grid[k + 1] - grid[k], 1e-9)
+        first = beats_per_bar - len(beats) if bar["index"] == 0 else 0
+        return round((first + k + fraction) * 4)
+
     for hit in hits:
         for i, bar in enumerate(result):
             if bar["start"] <= hit["t"] < bar["end"] and bar["end"] > bar["start"]:
-                if bar["index"] == 0:
-                    step = steps - round((bar["end"] - hit["t"]) / length * steps)   # a pickup leads into the downbeat
-                else:
-                    step = round((hit["t"] - bar["start"]) / length * steps)
+                step = position(bar, hit["t"])
                 if not 0 <= step <= steps:
                     break
                 if step == steps:

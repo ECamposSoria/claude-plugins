@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import sys
 
@@ -79,11 +80,19 @@ def test_bar_patterns() -> None:
     assert result[0]["counts"]["kick"] == 0
     assert result[1]["patterns"]["kick"] == "x..............."
     partial = [{"index": 0, "start": 0.0, "end": .54, "beats": [.04]},
-               {"index": 1, "start": .54, "end": 2.54, "beats": []}, {"index": 2, "start": 2.54, "end": 4.54, "beats": []},
-               {"index": 3, "start": 4.54, "end": 5.54, "beats": []}]
+               {"index": 1, "start": .54, "end": 2.54, "beats": [.54, 1.04, 1.54, 2.04]},
+               {"index": 2, "start": 2.54, "end": 4.54, "beats": [2.54, 3.04, 3.54, 4.04]},
+               {"index": 3, "start": 4.54, "end": 5.54, "beats": [4.54, 5.04]}]
     result = listen.bar_patterns([{"t": .04, "type": "kick"}, {"t": 4.54, "type": "kick"}, {"t": 5.04, "type": "kick"}], partial, 4)
     assert result[0]["patterns"]["kick"] == "............x..."
     assert result[3]["patterns"]["kick"] == "x...x..........."
+    tempo = [{"index": 1, "start": 0.0, "end": 2.0, "beats": [0.0, .5, 1.0, 1.5]},
+             {"index": 2, "start": 2.0, "end": 6.0, "beats": [2.0, 3.0, 4.0, 5.0]},
+             {"index": 3, "start": 6.0, "end": 8.0, "beats": [6.0, 6.5, 7.0, 7.5]}]
+    result = listen.bar_patterns([{"t": float(t), "type": "kick"} for t in (2, 3, 4, 5)], tempo, 4)
+    assert result[1]["patterns"]["kick"] == "x...x...x...x..."
+    assert result[1]["counts"]["kick"] == 4 and result[2]["counts"]["kick"] == 0
+    assert listen.bar_patterns([{"t": 2.5, "type": "snare"}], tempo, 4)[1]["patterns"]["snare"] == "..x............."
 
 
 def test_loudness_profile_and_hard_stop() -> None:
@@ -131,6 +140,15 @@ def test_segment_sections_finds_repeats() -> None:
     short = listen.segment_sections(signal[:sr * 8], signal[:sr * 8], sr, beats[:16], beats[:16:4], bars[:4], 4, 8,
                                     listen.loudness_profile(signal[:sr * 8], sr, bars[:4], 8), [])
     assert [(s["label"], s["start"], s["end"]) for s in short] == [("A", 0.0, 8)]
+
+
+def test_decode_keeps_timestamp_gaps(tmp_path: Path) -> None:
+    gap = tmp_path / "gap.mka"
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=12:r=44100",
+                    "-af", "aselect='not(between(t,4,8))'", "-c:a", "aac", str(gap)], check=True, timeout=60)
+    stereo, sr = listen.decode_audio(gap)
+    assert stereo.shape[1] / sr == pytest.approx(12, abs=.1)
+    assert float(np.abs(stereo[:, round(5 * sr):round(7 * sr)]).max()) < 1e-3
 
 
 def test_segment_sections_without_beats() -> None:

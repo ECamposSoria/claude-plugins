@@ -162,6 +162,19 @@ def _windows(duration: float, width: float = 4.0) -> list[tuple[float, float]]:
     return spans
 
 
+def _short_db(audio: np.ndarray, width: int = 2000, hop: int = 400) -> np.ndarray:
+    if len(audio) < width:
+        return np.array([])
+    power = np.concatenate(([0.0], np.cumsum(audio ** 2)))
+    starts = np.arange(0, len(audio) - width + 1, hop)
+    return 10 * np.log10(np.maximum((power[starts + width] - power[starts]) / width, 1e-20))
+
+
+def _runs(start: float, flags: np.ndarray, hop: float = .05) -> list[float]:
+    # Start time of each run of flagged 250 ms stretches, so one dropout is reported once.
+    return [round(start + i * hop, 2) for i in np.flatnonzero(flags) if i == 0 or not flags[i - 1]]
+
+
 def _channel_db(mid: np.ndarray, side: np.ndarray | None) -> float:
     # Mean power of L and R from mid = (L + R) / 2 and side = L - R.
     power = float(np.mean(mid ** 2)) + (float(np.mean(side ** 2)) / 4 if side is not None else 0.0) if mid.size else 0.0
@@ -207,12 +220,11 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
         # A short dropout or insert barely moves a 4 s correlation: compare 250 ms stretches too. 30 dB keeps a
         # dip (a level WARN) apart from audio that is gone or added.
         aligned_video, aligned_song = _align(p_video, p_song, round(lag * 8))
-        frames = min(len(aligned_video), len(aligned_song)) // 2000
-        video_db = np.array([_rms_db(aligned_video[i * 2000:(i + 1) * 2000]) for i in range(frames)])
-        song_db = np.array([_rms_db(aligned_song[i * 2000:(i + 1) * 2000]) for i in range(frames)])
+        # 250 ms stretches every 50 ms: any mute of 250 ms or more fills at least one of them.
+        video_db, song_db = _short_db(aligned_video), _short_db(aligned_song)
         offset = max(lag, 0) / 1000
-        row["dropouts"] = [round(start + offset + i * .25, 2) for i in range(frames) if song_db[i] > -50 and video_db[i] < song_db[i] - 30]
-        row["inserts"] = [round(start + offset + i * .25, 2) for i in range(frames) if video_db[i] > -50 and video_db[i] > song_db[i] + 30]
+        row["dropouts"] = _runs(start + offset, (song_db > -50) & (video_db < song_db - 30))
+        row["inserts"] = _runs(start + offset, (video_db > -50) & (video_db > song_db + 30))
         if stereo and _rms_db(q_song) - _rms_db(p_song) > -30:
             aligned_video, aligned_song = _align(q_video, q_song, round(lag * 8))
             row[f"{other}_correlation"] = _pearson(aligned_video, aligned_song)
