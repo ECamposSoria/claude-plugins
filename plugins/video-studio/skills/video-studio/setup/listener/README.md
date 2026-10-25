@@ -45,7 +45,8 @@ the CPU), copies the song and `listen.py` by `scp` into `C:\Users\docam\listener
 `/mnt/c/...`), runs the CUDA image with `--device cuda` (`run --rm`, so the VRAM is free afterwards), copies the
 results back by `scp` and deletes the job folder, also on failure. Exit 3 also means unreachable, image missing or
 a failed transfer: run the CPU command instead. 🔴 Files never go through the ssh→cmd→WSL pipe: 150 MB of stems
-stalled it until ssh gave up, while `scp` to the Windows side moved the same 147 MB in 1.3 s.
+stalled it until ssh gave up, while `scp` to the Windows side moved the same 147 MB in 1.3 s. If the laptop drops
+mid-job, cleanup cannot reach it either: delete any folder left in `C:\Users\docam\listener\jobs\`.
 
 Updating the laptop copy after changing the Dockerfile or `requirements.txt`:
 

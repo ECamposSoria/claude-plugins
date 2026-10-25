@@ -302,6 +302,29 @@ def test_stereo_file_swap_and_fold(tmp_path: Path, song: dict) -> None:
             assert code == 1 and any(expected in f["message"] for f in failures), result
 
 
+def test_stereo_edge_cases() -> None:
+    rng = np.random.default_rng(2)
+    a, b = rng.normal(size=96992), rng.normal(size=96992)
+    song = np.stack([a, .6 * a + .8 * b], axis=1)
+    findings, windows = sync.audio_match(song[:96989].copy(), song, 12.124, 30)
+    assert not any(f.level in ("FAIL", "WARN") for f in findings)
+    assert windows[-1]["side_correlation"] == pytest.approx(1)
+    mid, side = song.mean(axis=1), song[:, 0] - song[:, 1]
+    narrow = np.stack([mid + .05 * side, mid - .05 * side], axis=1)
+    findings, _ = sync.audio_match(narrow, song, 12.124, 30)
+    assert not any(f.level == "FAIL" for f in findings)
+    warnings = [f for f in findings if f.level == "WARN"]
+    assert len(warnings) == 1 and "stereo width changed in 3 of 3 windows (side up to -20.0 dB" in warnings[0].message
+    antiphase = np.stack([a, -a], axis=1)
+    findings, windows = sync.audio_match(antiphase.copy(), antiphase, 12.124, 30)
+    assert not any(f.level in ("FAIL", "WARN") for f in findings)
+    assert [w["basis"] for w in windows] == ["side"] * 3
+    muted = antiphase.copy()
+    muted[8000 * 4:8000 * 8] = 0
+    findings, _ = sync.audio_match(muted, antiphase, 12.124, 30)
+    assert any(f.level == "FAIL" and "silent where the song is not in 1 of 3 windows, at 0:04.0" in f.message for f in findings)
+
+
 def test_few_accents_and_no_events() -> None:
     analysis = {"beats": [1.0], "downbeats": [1.0], "drums": {"hits": []}}
     diffs = [0.0] * 90

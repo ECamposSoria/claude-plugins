@@ -127,6 +127,18 @@ def test_segment_sections_finds_repeats() -> None:
     assert [(s["label"], s["start"], s["end"]) for s in short] == [("A", 0.0, 8)]
 
 
+def test_segment_sections_without_beats() -> None:
+    sr = 22050
+    for duration in (12, 13, 40):
+        signal = np.random.default_rng(duration).normal(0, .1, sr * duration)
+        loudness = listen.loudness_profile(signal, sr, [], duration)
+        sections = listen.segment_sections(signal, signal, sr, np.array([]), np.array([]), [], 4, duration, loudness, [])
+        assert sections[0]["start"] == 0.0 and sections[-1]["end"] == duration
+        assert all(a["end"] == b["start"] for a, b in zip(sections, sections[1:]))
+        if duration < 32:
+            assert len(sections) == 1
+
+
 def test_melody_notes() -> None:
     sr = 22050
     signal = np.zeros(round(sr * 2.6))

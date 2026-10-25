@@ -160,6 +160,12 @@ def _windows(duration: float, width: float = 4.0) -> list[tuple[float, float]]:
     return spans
 
 
+def _channel_db(mid: np.ndarray, side: np.ndarray | None) -> float:
+    # Mean power of L and R from mid = (L + R) / 2 and side = L - R.
+    power = float(np.mean(mid ** 2)) + (float(np.mean(side ** 2)) / 4 if side is not None else 0.0) if mid.size else 0.0
+    return 10 * math.log10(max(power, 1e-20))
+
+
 def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float) -> tuple[list[Finding], list[dict]]:
     # Timing and identity come from the mid signal; with two channels the side signal (L - R) also has to
     # match, because a channel swap or a fold-down to mono leaves the mid untouched.
@@ -172,18 +178,26 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
     windows = []
     for start, end in _windows(duration):
         lo, hi = round(start * 8000), round(end * 8000)
-        video_silent, song_silent = _rms_db(video[lo:hi]) < -60, _rms_db(song[lo:hi]) < -60
+        count = min(len(video[lo:hi]), len(song[lo:hi]))
+        v_mid, s_mid = video[lo:lo + count], song[lo:lo + count]
+        v_side = video_side[lo:lo + count] if stereo else None
+        s_side = song_side[lo:lo + count] if stereo else None
+        # Silence is judged on the channels: an antiphase passage cancels in the mid signal.
+        video_silent, song_silent = _channel_db(v_mid, v_side) < -60, _channel_db(s_mid, s_side) < -60
         if video_silent or song_silent:
             # Silence has no variance, so its correlation says nothing: judge it by level instead.
             windows.append({"t": start, "end": end, "lag_ms": None, "correlation": None, "level_db": None,
                             "silent": "both" if video_silent and song_silent else "video" if video_silent else "song"})
             continue
-        lag, correlation, db = correlate_window(video[lo:hi], song[lo:hi])
-        side = None
-        if stereo and _rms_db(song_side[lo:hi]) - _rms_db(song[lo:hi]) > -30:
-            side = _pearson(*_align(video_side[lo:hi], song_side[lo:hi], round(lag * 8)))
-        windows.append({"t": start, "end": end, "lag_ms": lag, "correlation": correlation, "level_db": db,
-                        "side_correlation": side, "silent": None})
+        # Match on the side only where the mid has cancelled (antiphase); wide stereo still matches on the mid.
+        basis = "side" if stereo and _rms_db(s_mid) < _rms_db(s_side) - 20 else "mid"
+        lag, correlation, db = correlate_window(*((v_side, s_side) if basis == "side" else (v_mid, s_mid)))
+        side = side_db = None
+        if stereo and basis == "mid" and _rms_db(s_side) - _rms_db(s_mid) > -30:
+            aligned_video, aligned_song = _align(v_side, s_side, round(lag * 8))
+            side, side_db = _pearson(aligned_video, aligned_song), _rms_db(aligned_video) - _rms_db(aligned_song)
+        windows.append({"t": start, "end": end, "lag_ms": lag, "correlation": correlation, "level_db": db, "basis": basis,
+                        "side_correlation": side, "side_db": side_db, "silent": None})
     findings = []
     total = len(windows)
 
@@ -215,6 +229,12 @@ def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float
         findings.append(Finding("FAIL", "audio-match", f"the stereo image differs from the song in {len(image)} of {total} windows "
                                 f"(side correlation {lowest['side_correlation']:.2f} at {format_time(lowest['t'])}), at {where(image)}: "
                                 "channels swapped, folded to mono or remixed?", image[0]["t"]))
+    width = [w for w in matched if w.get("side_db") is not None and w["side_correlation"] >= .8 and abs(w["side_db"]) > 2]
+    if width:
+        biggest = max(width, key=lambda w: abs(w["side_db"]))
+        findings.append(Finding("WARN", "audio-match", f"stereo width changed in {len(width)} of {total} windows (side up to "
+                                f"{biggest['side_db']:+.1f} dB at {format_time(biggest['t'])}), at {where(width)}: "
+                                "widened, narrowed or remixed?", width[0]["t"]))
     changed = [w for w in matched if abs(w["level_db"]) > 1]
     if changed:
         biggest = max(changed, key=lambda w: abs(w["level_db"]))

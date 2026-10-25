@@ -64,7 +64,8 @@ if ! [ "$used" -eq "$used" ] 2>/dev/null || [ "$used" -gt "$BUSY_MIB" ]; then
     exit 3
 fi
 
-winhome="$(ssh_l 'echo %USERPROFILE%' </dev/null | tr -d '\r' | sed 's/ *$//')"        # C:\Users\<name>
+winhome="$(ssh_l 'echo %USERPROFILE%' </dev/null | tr -d '\r' | sed 's/ *$//')" \
+    || { echo "listen_remote: laptop unreachable ($HOST)" >&2; exit 3; }                  # C:\Users\<name>
 drive="$(printf '%s' "${winhome%%:*}" | tr '[:upper:]' '[:lower:]')"
 wsl_home="/mnt/$drive$(printf '%s' "${winhome#*:}" | tr '\\' '/')"
 job="$(date -u +%Y%m%dT%H%M%S)-$$"
@@ -88,6 +89,8 @@ remote "cd ~/listener/setup && docker compose -p listener -f docker-compose.gpu.
   listener /tool/listen.py $(printf '%q' "/work/$name") -o /work/out --device cuda$args"
 status=$?
 set -e
+# 255 is ssh's own failure (the laptop dropped mid-job); listen.py never exits with it.
+[ "$status" -ne 255 ] || { echo "listen_remote: lost the laptop during the job" >&2; exit 3; }
 [ "$status" -eq 0 ] || exit "$status"
 scp -q -r -o BatchMode=yes "$HOST:listener/jobs/$job/out" "$stage/" || { echo "listen_remote: download failed" >&2; exit 3; }
 mkdir -p "$out"

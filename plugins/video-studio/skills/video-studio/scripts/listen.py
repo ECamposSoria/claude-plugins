@@ -374,7 +374,7 @@ def segment_sections(harmonic: np.ndarray, mono: np.ndarray, sr: int, beats: np.
     unit_seconds = float(np.median(np.diff(units))) if len(units) > 1 else 2.0
     min_bars = 4 if duration >= 60 else 2
     min_units = min_bars * (beats_per_bar if bars else 1)
-    if len(units) >= 3 * min_units:
+    if len(units) >= max(3 * min_units, 16):
         clusters = _laplacian_labels(cqt, mfcc, max_k=max(2, min(6, len(units) // (2 * min_units))))
     else:
         clusters = np.zeros(len(units), dtype=int)
