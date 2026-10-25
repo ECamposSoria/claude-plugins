@@ -1,6 +1,6 @@
 {
   "name": "nano-banana-multi",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "AI generation: images (Gemini, gpt-image-2 via Codex, Antigravity), video clips and 3D models via fal.ai, with a spend guard on every paid run.",
   "author": {
     "name": "ECamposSoria"

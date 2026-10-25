@@ -28,9 +28,15 @@ truth, and the full price of the request is what you pass as `--max-usd` on ever
 | `fal-ai/kling-video/v3/pro/image-to-video` | **$0.112/s** audio off, $0.168/s audio on | **Default realistic clip.** People and physics; start + end frame. 🔴 `generate_audio` defaults to `true`: pass `false` unless you use its sound. |
 | `kling/v4/image-to-video` | $0.157/s 720p, **$0.235/s 1080p** | Only for 30 s clips, per-shot `multi_prompt`, native audio. 🔴 `resolution` defaults to `1080p`. |
 | `bytedance/seedance-2.5/us/image-to-video` | $0.0214 per 1K tokens, tokens = w×h×s×24/1024 (≈$1.04/s at 1080p) | End frame plus synced audio, up to 30 s. ~2× BytePlus's own price. |
-| `google/gemini-omni-flash/v1.1/image-to-video` | $0.03/s | Cheapest end-frame option; motion drafts |
+| `google/gemini-omni-flash/v1.1/image-to-video` | $0.10/s 720p, $0.15/s 1080p ($0.03/s is the 360p floor `price` shows) | End frame plus synced audio; motion drafts at 360p |
+| `minimax/h3/image-to-video` | $0.06/s 768P, $0.13/s 2K, $0.16/s 4K | **Candidate default** (2026-10-25): #1 on Artificial Analysis image-to-video (Elo 1140 vs Kling 3.0 Pro's 1000) at half Kling's price. 🔴 `resolution` defaults to `2K` (an upscale of 768P): pass `768P`. Not yet A/B-tested by us on people, lettering or start+end frames. |
+| `blackforestlabs/flux-3-max/image-to-video` | $0.0425/s 720p, $0.0725/s 1080p **until 2026-11-07** (then $0.17 / $0.29) | #2 on the same board (1138); 5–20 s, audio on by default (`generate_audio: false`). Cheapest top model only while the promotion lasts. |
 | `fal-ai/film` | $0.0013/s | Frame interpolation to repair a pop: `start_image_url`, `end_image_url`, `num_frames` (≤ 8). Pass `--max-usd 0.01`. |
 | `fal-ai/sam-3/video` | $0.005 per 16 frames | Per-frame masks of people/objects for compositing repairs |
+
+Quality rankings (blind human votes, read 2026-10-25): https://artificialanalysis.ai/video/leaderboard/image-to-video.
+Kling 3.0 Pro is ranked 18th there; it stays the default until one A/B take on a real brief confirms a
+replacement, because it is the model our repair recipes and motion transfer were proven on.
 
 When both the first and the last frame matter, pass both: on per-second pricing an end frame costs nothing.
 Draft at 720p, render finals at 1080p, cap takes at three per shot.
@@ -69,7 +75,7 @@ website-builder's job (its 3D section).
   same silhouette.
 - **Not `mask_url` on `openai/gpt-image-2/edit`**: the mask is ignored and the whole scene regenerated.
 
-## Other providers (decided 2026-10-24, details in project memory `image-video-generation/`)
+## Other providers (decided 2026-10-24, details in the shared media memory `~/projects/image-video-generation/memory/`)
 
 - **Venice**: never-expiring credits; its "Private" models are less restricted. Use only when fal models
   refuse a legitimate brief. Its "Anonymized" third-party models keep upstream filters.
