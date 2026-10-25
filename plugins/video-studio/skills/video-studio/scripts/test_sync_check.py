@@ -232,6 +232,21 @@ def test_offset_sign_and_drift() -> None:
     assert correlation >= .99
 
 
+def test_whole_song_is_compared() -> None:
+    rng = np.random.default_rng(0)
+    song = rng.normal(size=8000 * 120)
+    video = song.copy()
+    video[8000 * 25:8000 * 45] = rng.normal(size=8000 * 20)
+    findings, windows = sync.audio_match(video, song, 120, 30)
+    assert [(w["t"], w["end"]) for w in windows] == [(float(t), float(t + 4)) for t in range(0, 120, 4)]
+    failures = [f for f in findings if f.level == "FAIL"]
+    assert len(failures) == 1 and "not the song in 6 of 30 windows" in failures[0].message
+    assert failures[0].t == 24
+    assert sync._windows(10.5) == [(0.0, 4.0), (4.0, 8.0), (8.0, 10.5)]
+    assert sync._windows(8.5) == [(0.0, 4.0), (4.0, 8.5)]
+    assert sync._windows(3.0) == [(0.0, 3.0)]
+
+
 def test_few_accents_and_no_events() -> None:
     analysis = {"beats": [1.0], "downbeats": [1.0], "drums": {"hits": []}}
     diffs = [0.0] * 90
