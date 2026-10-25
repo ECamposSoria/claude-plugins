@@ -15,7 +15,8 @@ took 42 min and ~78K output tokens (~$3 at API prices), 26 of those minutes wait
 finished, and used three 5-hour limits. He could not rank the six results. Most of the cost was the agent
 rediscovering a workflow and waiting on renders, which is what this leg removes. So:
 
-- **One agent does the whole piece.** No Ultracode, no sub-agent per scene, no multi-agent review.
+- **One director and one builder per piece** (Claude directs, Codex writes the code; SKILL.md "Who writes the
+  code"). No Ultracode, no sub-agent per scene, no multi-agent review.
   (`hyperframes:music-to-video` dispatches one sub-agent per frame; use it only for a short lyric or kinetic-type
   cut, never for a full music video.)
 - **Effort medium**; high only for 3D with characters. Never max by default.
@@ -79,7 +80,10 @@ Post it (checkpoint 1).
 
 ## Step 3: build with Hyperframes
 
-Follow [animation-hyperframes.md](animation-hyperframes.md) and its traps, plus:
+Codex writes the project and Claude reviews it (SKILL.md "Who writes the code": 3D scenes on `gpt-6-astra`,
+everything else on `gpt-6.1-sol`). The brief carries `treatment.md`, the song's `README.md`, the paths of
+`analysis.json` and `features.json`, the size, fps and duration, and every rule below. Follow
+[animation-hyperframes.md](animation-hyperframes.md) and its traps, plus:
 
 - **One project, one root composition, full song length.** Set the root `data-duration` to
   `analysis.json` → `source.duration_sec` and `data-fps` to the features' fps. Scenes are wrappers inside one

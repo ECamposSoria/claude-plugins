@@ -44,6 +44,22 @@ Voice, music, captions and loudness are shared by every route: [legs/audio.md](l
 Follow the playbook. Paid or cloud calls (fal clips through the `nano-banana-multi:image-gen` spend guard, ElevenLabs voice and music
 in the audio leg) are quoted to the user before the call.
 
+### Who writes the code
+
+A composition (Hyperframes, Remotion) is mostly code, and its build and fix rounds are where the tokens go.
+**Claude directs and checks; Codex builds** through the `codex-delegate` skill (one brief per build pass), which
+moves the bulk of the work onto the ChatGPT plan. Claude keeps the brief, the look at every still and draft, the
+final render and the checks; Codex writes files only (no renders, no containers).
+
+| Piece | Who | Why (checked 2026-10-25) |
+|---|---|---|
+| 3D scenes: three.js characters, cameras, lighting, shaders | Codex `gpt-6-astra`, medium | Leads DesignArena's 3D board (Astra 1461, Astra max 1503; Claude Opus 5.5 1466; GPT-6.1 Sol 1436) but costs 5× Sol per token: spend it on 3D only |
+| Everything else: 2D, typography, lyrics, per-scene pieces, data plumbing, a batch of fixes | Codex `gpt-6.1-sol`, medium (low for purely mechanical edits) | WebDev Arena 1749 vs Astra's 1774 at about a fifth of the cost per task; 500K context |
+| A one- or two-line tweak (a colour, one timing) | Claude, inline | A delegation round (10–20 min) costs more than the edit |
+
+`gpt-6-luna` is 20× cheaper again but ranks far lower on visual code (DesignArena 3D 1213): not for anything that
+is seen. Batch fixes: after each draft, one brief with every change, not one per finding.
+
 ## Step 3: check, then deliver
 
 Run the QA script on every render before anyone sees it:
