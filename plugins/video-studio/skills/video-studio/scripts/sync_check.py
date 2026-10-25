@@ -139,24 +139,41 @@ def correlate_window(video: np.ndarray, song: np.ndarray, sr: int = 8000) -> tup
     return 1000 * lag / sr, pearson, db
 
 
+def _rms_db(audio: np.ndarray) -> float:
+    return 10 * math.log10(max(float(np.mean(audio ** 2)) if audio.size else 0.0, 1e-20))
+
+
 def audio_match(video: np.ndarray, song: np.ndarray, duration: float, fps: float) -> tuple[list[Finding], list[dict]]:
     width = min(20.0, duration / 3)
-    windows = []
+    windows, findings = [], []
     for start in (0.0, (duration - width) / 2, duration - width):
         lo, hi = round(start * 8000), round((start + width) * 8000)
+        video_silent, song_silent = _rms_db(video[lo:hi]) < -60, _rms_db(song[lo:hi]) < -60
+        if video_silent or song_silent:
+            # Silence has no variance, so its correlation says nothing: judge it by level instead.
+            windows.append({"t": start, "lag_ms": None, "correlation": None, "level_db": None,
+                            "silent": "both" if video_silent and song_silent else "video" if video_silent else "song"})
+            if video_silent != song_silent:
+                where = "the video's audio is silent where the song is not" if video_silent else "the video has sound where the song is silent"
+                findings.append(Finding("FAIL", "audio-match", f"{where} at {format_time(start)}", start))
+            continue
         lag, correlation, db = correlate_window(video[lo:hi], song[lo:hi])
-        windows.append({"t": start, "lag_ms": lag, "correlation": correlation, "level_db": db})
-    findings = []
-    drift = len({w["lag_ms"] for w in windows}) > 1
-    for window in windows:
+        windows.append({"t": start, "lag_ms": lag, "correlation": correlation, "level_db": db, "silent": None})
+    measured = [w for w in windows if w["silent"] is None]
+    drift = len({w["lag_ms"] for w in measured}) > 1
+    for window in measured:
         if window["correlation"] < .8:
             findings.append(Finding("FAIL", "audio-match", f"the video's audio is not the song (correlation {window['correlation']:.2f})", window["t"]))
         elif abs(window["lag_ms"]) > 500 / fps:
             findings.append(Finding("FAIL", "audio-match", f"audio offset {window['lag_ms']:+.1f} ms at {format_time(window['t'])}" + ("; drift across windows" if drift else ""), window["t"]))
         if window["correlation"] >= .8 and abs(window["level_db"]) > 1:
             findings.append(Finding("WARN", "audio-match", f"audio level changed by {window['level_db']:+.1f} dB (normalised or remixed?)", window["t"]))
-    if not findings:
-        findings.append(Finding("PASS", "audio-match", "; ".join(f"{format_time(w['t'])}: lag {w['lag_ms']:+.1f} ms, correlation {w['correlation']:.3f}" for w in windows)))
+    if not findings and not measured:
+        findings.append(Finding("INFO", "audio-match", "song and video are silent in every sampled window; correlation not measured"))
+    elif not findings:
+        findings.append(Finding("PASS", "audio-match", "; ".join(
+            f"{format_time(w['t'])}: lag {w['lag_ms']:+.1f} ms, correlation {w['correlation']:.3f}" if w["silent"] is None
+            else f"{format_time(w['t'])}: silent in both" for w in windows)))
     return findings, windows
 
 
@@ -273,8 +290,9 @@ def run_checks(args: argparse.Namespace, analysis: dict) -> dict:
             if audio:
                 video_audio = decode_mono(args.video, duration)
                 song_audio = decode_mono(args.audio, duration)
-                # A container can place an otherwise unshifted audio stream after picture time zero.
-                start = _number(audio.get("start_time")) or 0.0
+                # Picture time zero is the first video frame; containers offset either stream from it
+                # (an MKV remux starts the video at 0.021 s to cover AAC priming).
+                start = (_number(audio.get("start_time")) or 0.0) - (_number(video.get("start_time")) or 0.0)
                 if start > 0:
                     video_audio = np.pad(video_audio, (round(start * 8000), 0))
                 elif start < 0:

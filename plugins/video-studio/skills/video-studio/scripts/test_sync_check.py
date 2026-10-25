@@ -168,6 +168,47 @@ def test_audio_level_change(tmp_path: Path, song: dict) -> None:
         assert window["level_db"] == pytest.approx(-6, abs=.5)
 
 
+def test_silent_windows(tmp_path: Path, song: dict) -> None:
+    sr = 44100
+    with wave.open(str(song["path"]), "rb") as source:
+        audio = np.frombuffer(source.readframes(source.getnframes()), dtype="<i2").astype(np.float64) / 32767
+    audio = audio.copy()
+    audio[:4 * sr] = 0
+    write_wav(song["path"], audio)
+    analysis = json.loads(song["analysis"].read_text())
+    analysis["source"]["sha256"] = hashlib.sha256(song["path"].read_bytes()).hexdigest()
+    song["analysis"].write_text(json.dumps(analysis), encoding="utf-8")
+    video = tmp_path / "silent-intro.mp4"
+    make_video(video, song)
+    code, result = check(video, song)
+    assert not any(f["level"] == "FAIL" for f in result["findings"]), result
+    assert code == 0
+    assert [w["silent"] for w in result["stats"]["audio_windows"]] == ["both", None, None]
+    audio[4 * sr:8 * sr] = 0
+    muted_audio = tmp_path / "muted-middle.wav"
+    write_wav(muted_audio, audio)
+    muted = tmp_path / "muted-middle.mp4"
+    make_video(muted, song, audio=muted_audio)
+    code, result = check(muted, song)
+    assert code == 1
+    assert any(f["check"] == "audio-match" and f["level"] == "FAIL" and "silent where the song is not" in f["message"] for f in result["findings"])
+
+
+def test_container_start_offset(tmp_path: Path, song: dict) -> None:
+    aligned = tmp_path / "aligned.mp4"
+    make_video(aligned, song)
+    remux = tmp_path / "aligned.mkv"
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(aligned), "-c", "copy", str(remux)], check=True, timeout=60)
+    starts = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "json", str(remux)],
+                            capture_output=True, text=True, check=True).stdout
+    video_start = next(float(s["start_time"]) for s in json.loads(starts)["streams"] if s["codec_type"] == "video")
+    assert video_start > .01
+    code, result = check(remux, song)
+    assert code == 0, result
+    for window in result["stats"]["audio_windows"]:
+        assert abs(window["lag_ms"]) <= 2
+
+
 def test_usage_errors(tmp_path: Path, song: dict) -> None:
     video = tmp_path / "placeholder.mp4"
     video.write_bytes(b"")

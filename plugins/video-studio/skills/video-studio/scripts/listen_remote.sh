@@ -35,6 +35,17 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ -z "$lyrics" ] || [ -f "$lyrics" ] || { echo "listen_remote: no such lyrics file: $lyrics" >&2; exit 2; }
+outputs=(README.md analysis.json features.json listen-run.json stems/drums.wav stems/bass.wav stems/other.wav stems/vocals.wav)
+inputs=("$(realpath -m -- "$song")")
+[ -z "$lyrics" ] || inputs+=("$(realpath -m -- "$lyrics")")
+root="$(realpath -m -- "$out")"
+for f in "${outputs[@]}"; do
+    target="$(realpath -m -- "$out/$f")"
+    case "$target" in "$root"/*) ;; *) echo "listen_remote: $out/$f would land outside $out" >&2; exit 2 ;; esac
+    for i in "${inputs[@]}"; do
+        [ "$target" != "$i" ] || { echo "listen_remote: $out/$f would overwrite an input" >&2; exit 2; }
+    done
+done
 if [ "$force" -eq 0 ]; then
     for f in README.md analysis.json features.json; do
         [ ! -e "$out/$f" ] || { echo "listen_remote: $out/$f exists; pass --force to overwrite" >&2; exit 2; }
@@ -69,7 +80,8 @@ scp -q -o BatchMode=yes "$stage/$name" "$HOST:listener/jobs/$job/" \
     && { [ -z "$lyrics" ] || scp -q -o BatchMode=yes "$lyrics" "$HOST:listener/jobs/$job/lyrics.txt"; } \
     || { echo "listen_remote: upload failed" >&2; exit 3; }
 
-printf -v args ' %q' "${pass[@]+"${pass[@]}"}"
+args=""
+[ "${#pass[@]}" -eq 0 ] || printf -v args ' %q' "${pass[@]}"
 set +e
 remote "cd ~/listener/setup && docker compose -p listener -f docker-compose.gpu.yml run --rm -T \
   -v $(printf '%q' "$wsl_home/listener/jobs/$job"):/work -v $(printf '%q' "$wsl_home/listener/jobs/$job/tool"):/tool:ro \
