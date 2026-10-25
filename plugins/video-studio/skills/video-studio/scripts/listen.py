@@ -532,7 +532,10 @@ def filter_hallucinations(segments: list[dict], vocals_mono: np.ndarray, sr: int
         text = " ".join(_tokens(segment["text"]))
         reason = "silent vocals" if silent and np.mean(silent) >= .8 else None
         if reason is None and len(segment["text"].split()) <= 6 and text in phrases:
-            reason = "known hallucination phrase"
+            # Songs do sing these; only Whisper's own doubt marks the stock phrase as invented.
+            probabilities = [w["probability"] for w in segment.get("words", [])]
+            if not probabilities or float(np.mean(probabilities)) < .6:
+                reason = "known hallucination phrase"
         if reason:
             dropped.append({**segment, "reason": reason})
         else:

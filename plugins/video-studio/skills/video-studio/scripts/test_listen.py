@@ -183,6 +183,12 @@ def test_filter_hallucinations() -> None:
     kept, dropped = listen.filter_hallucinations(segments, signal, sr)
     assert kept == segments[:1]
     assert [s["reason"] for s in dropped] == ["silent vocals", "known hallucination phrase"]
+    sung = [{"start": 1, "end": 2, "text": "Gracias", "words": [{"start": 1, "end": 2, "word": "Gracias", "probability": .99}]},
+            {"start": 2, "end": 3, "text": "Thank you", "words": [{"start": 2, "end": 2.5, "word": "Thank", "probability": .3},
+                                                                {"start": 2.5, "end": 3, "word": "you", "probability": .4}]}]
+    kept, dropped = listen.filter_hallucinations(sung, signal, sr)
+    assert [s["text"] for s in kept] == ["Gracias"]
+    assert [(s["text"], s["reason"]) for s in dropped] == [("Thank you", "known hallucination phrase")]
 
 
 def test_align_lyrics() -> None:
