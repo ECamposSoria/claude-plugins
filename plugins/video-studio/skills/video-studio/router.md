@@ -68,9 +68,25 @@ A landing page, component, CodePen, HTML email, Stitch or Claude artifact they w
 | "add a voiceover / music / captions / dub it" to an existing video | the audio leg on its own |
 | "music video / visualizer / lyric video for this song", "cut these clips to the beat" | music-video |
 | a pasted reel or YouTube link, "make one like this" | Step 0 first, then route |
+| "recreate this video", "the same animation for our product" | Step 0 with [recreate.md](recreate.md), then route (usually animation-hyperframes) |
 
 ## Considered and not adopted (2026-10-24)
 
 OpenMontage (full agentic studio, AGPL: we borrowed its pre-delivery checks instead), `/brag` (same job as
 `hyperframes:product-launch-video`), ManimGX (math/3D explainer engine, v0.1, untested without a GPU) and the
 Hainrixz motion/editor agents. Reasons in the shared media memory, `~/projects/image-video-generation/memory/reference_reel_tools_eval_2026-10.md`.
+
+## Considered and not adopted (2026-10-27)
+
+From a walkthrough of Codex recreating launch videos (adopted from it: [recreate.md](recreate.md), timestamped and
+side-by-side contact sheets, the "Revisions" section of SKILL.md, the line-work and 3D-product notes in the
+Hyperframes leg):
+
+- **DaVinci Resolve driven by computer use**: a desktop app the agent clicks through (about 20 minutes for 10 s),
+  GPU only (the laptop), and every change is another clicking session rather than an edit to a file. Its smoother
+  curves were SVG path animation, which Hyperframes does.
+- **Diffusion Studio**: a third composition engine beside Remotion and Hyperframes, with nothing they lack.
+- **Clicky** (Mac voice-to-clipboard prompts), **MagicPath** (a canvas to annotate frames) and **Mobbin** (a
+  library of app screenshots): tools for a person typing into the Codex app. Their ideas live here as one brief
+  per revision round and timestamped sheets; UI references are website-builder's job.
+- **Blender**: unchanged since 2026-10-25 (realism only, not installed).

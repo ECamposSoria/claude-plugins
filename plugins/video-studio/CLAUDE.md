@@ -16,8 +16,8 @@ instructions plus a few scripts, not an engine.
 
 **Hybrid** = a base (footage or AI clips) + animation overlays, joined with `scripts/composite.sh`.
 
-Routing: `skills/video-studio/router.md`. Playbooks: `skills/video-studio/legs/`. Setup state:
-`skills/video-studio/setup/install.md`.
+Routing: `skills/video-studio/router.md`. Playbooks: `skills/video-studio/legs/`. Matching a reference video
+closely: `skills/video-studio/recreate.md`. Setup state: `skills/video-studio/setup/install.md`.
 
 ## Scripts (`skills/video-studio/scripts/`)
 
@@ -29,7 +29,8 @@ Routing: `skills/video-studio/router.md`. Playbooks: `skills/video-studio/legs/`
 - `listen_remote.sh`: the same on the laptop's RTX 4070 over ssh; exit 3 = use the CPU image.
 - `sync_check.py`: a music video's audio is the song, unshifted and full length; picture accents against the
   beats. Tests: `test_sync_check.py`, run in a container.
-- `qa_render.py`: pre-delivery check (probe, black, freeze, silence, loudness, one-frame pops, contact sheet).
+- `qa_render.py`: pre-delivery check (probe, black, freeze, silence, loudness, one-frame pops, contact sheet with
+  a timestamp on each tile; `--compare REF` puts the reference's frame from the same moment beside each tile).
   Tests: `test_qa_render.py`, run in a container.
 
 ## Policies
@@ -46,4 +47,5 @@ Routing: `skills/video-studio/router.md`. Playbooks: `skills/video-studio/legs/`
 ## Considered and not adopted (2026-10-24)
 
 OpenMontage, `/brag`, ManimGX and the Hainrixz motion/editor agents. Reasons in the shared media memory
-`~/projects/image-video-generation/memory/reference_reel_tools_eval_2026-10.md`.
+`~/projects/image-video-generation/memory/reference_reel_tools_eval_2026-10.md`. On 2026-10-27: DaVinci Resolve
+driven by computer use, Diffusion Studio, Clicky, MagicPath and Mobbin; reasons at the end of `router.md`.

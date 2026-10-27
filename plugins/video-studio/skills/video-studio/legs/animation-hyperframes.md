@@ -44,6 +44,18 @@ project README so a re-render months later produces the same frames. Last versio
 7. `container_overflow` from `check` is not always a bug (a Ken Burns that leaves the card on purpose).
    Look with `snapshot` before silencing it with `data-layout-allow-overflow`.
 
+## Line work and 3D products
+
+- **Lines that curve, draw on or flow** (ribbons, strokes, underlines in a reference): SVG paths drawn with
+  `DrawSVGPlugin` or `stroke-dashoffset` and reshaped with `MorphSVGPlugin` (recipes in the
+  `hyperframes:motion-graphics` categories), not rotated rectangles, which read as stiff. Vendor the plugins with
+  GSAP.
+- **A product that must come apart** (keys lifting off a keyboard, a lid opening, a card sliding out of a
+  phone): model it in three.js code from reference photos, part by part (boxes, extrusions, rounded rectangles,
+  textures cut from the photos), so each part can move. image-gen's photo-to-3D returns one fused mesh: use it
+  only for a product that just turns or floats. Blender only when the brief asks for realism (shared media
+  memory, `reference_media_skills.md`, "3D: three.js by default").
+
 ## Brand and layout
 
 - Real logo file only. Mac Group's isotype needs ~300 px for the inner text to read; at small sizes pair it

@@ -342,29 +342,94 @@ def _jump_indices(video: str, timeout: float = 60.0, video_index: int = 0) -> tu
     return jumps, len(diffs) + int(previous is not None), last_timestamp, last_duration
 
 
+@dataclass
+class SheetReference:
+    path: str
+    index: int
+    offset: float
+    last_frame: float | None
+
+
+def _seek(timestamp: float) -> str:
+    return f"{math.floor(timestamp * 1000) / 1000:.3f}"
+
+
+def _frame_chain(label: str | None, height: int | None = None) -> str:
+    # square pixels first, so anamorphic frames and side-by-side pairs keep the shape a player shows
+    chain = "scale=trunc(iw*sar/2)*2:ih,setsar=1," + (f"scale=-2:{height}" if height else "scale=320:-2")
+    if label:
+        chain += f",drawtext=text={label}:x=6:y=6:fontsize=18:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=4"
+    return chain
+
+
+def _frame_command(video: str, video_index: int, timestamp: float, target: Path, labelled: bool,
+                   reference: SheetReference | None = None, reference_time: float = 0.0) -> list[str]:
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", _seek(timestamp), "-i", video]
+    label = f"{timestamp:.2f}s" if labelled else None
+    if reference is None:
+        return command + ["-map", f"0:{video_index}", "-frames:v", "1", "-vf", _frame_chain(label), "-q:v", "3", str(target)]
+    reference_label = f"ref {reference_time:.2f}s" if labelled else None
+    graph = (f"[0:{video_index}]{_frame_chain(label, 320)}[a];"
+             f"[1:{reference.index}]{_frame_chain(reference_label, 320)}[b];[a][b]hstack")
+    return command + ["-ss", _seek(reference_time), "-i", reference.path, "-filter_complex", graph,
+                      "-frames:v", "1", "-q:v", "3", str(target)]
+
+
+def _sheet_reference(path: str) -> SheetReference:
+    proc = _run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", path])
+    if proc.returncode:
+        raise RuntimeError(f"reference {path}: ffprobe failed: {proc.stderr.strip()[-300:]}")
+    probe = json.loads(proc.stdout)
+    video = select_video_stream(probe)
+    if video is None:
+        raise RuntimeError(f"reference {path} has no video stream")
+    index = int(video["index"])
+    duration = _number((probe.get("format") or {}).get("duration")) or stream_duration(video)
+    _, _, last_frame, _ = _jump_indices(path, pass_timeout(duration), index)
+    return SheetReference(path, index, max(0.0, stream_start(video) - stream_start(probe.get("format"))), last_frame)
+
+
 def _make_sheet(video: str, destination: str, duration: float, frames: int, video_index: int = 0,
-                last_frame: float | None = None, offset: float = 0.0) -> list[float]:
+                last_frame: float | None = None, offset: float = 0.0,
+                reference: SheetReference | None = None) -> tuple[list[float], str | None]:
+    """Return the sampled times and, when the timestamps could not be printed, ffmpeg's reason."""
     count = max(1, frames)
     # offset = where the picture starts on the file's timeline (video that starts after the audio)
     times = [offset + i * duration / count for i in range(count)]
     if last_frame is not None:
         # never seek past the last decoded frame (tiny clips, containers longer than the picture)
         times = [min(t, last_frame) for t in times]
+    unlabelled_reason = None
     with tempfile.TemporaryDirectory(prefix="qa-render-") as tmp:
         paths = []
         for index, timestamp in enumerate(times):
             target = Path(tmp) / f"frame-{index:02d}.jpg"
-            proc = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{math.floor(timestamp * 1000) / 1000:.3f}", "-i", video, "-map", f"0:{video_index}", "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "3", str(target)])
-            if proc.returncode or not target.exists():
+            reference_time = 0.0
+            if reference is not None:
+                # the same moment of the picture, clamped to the reference's last frame when it is shorter
+                reference_time = reference.offset + (timestamp - offset)
+                if reference.last_frame is not None:
+                    reference_time = min(reference_time, reference.last_frame)
+            # drawtext needs a usable font; without one the sheet is still made, unlabelled
+            for labelled in ((False,) if unlabelled_reason else (True, False)):
+                target.unlink(missing_ok=True)
+                proc = _run(_frame_command(video, video_index, timestamp, target, labelled, reference, reference_time))
+                if not proc.returncode and target.exists():
+                    break
+                if labelled:
+                    # ffmpeg names the cause on its first line; the rest echoes the filter graph back
+                    unlabelled_reason = next((line.strip() for line in (proc.stderr or proc.stdout or "").splitlines()
+                                              if line.strip()), f"ffmpeg exited {proc.returncode}")[:200]
+            else:
                 raise RuntimeError(f"contact sheet frame at {timestamp:.3f}s failed: {(proc.stderr or proc.stdout).strip()[-300:]}")
             paths.append(target)
         # ffmpeg's image2 demuxer needs sequential numbered files; all chosen times are evenly spaced.
-        columns = min(4, len(paths))
+        columns = min(2 if reference else 4, len(paths))
         rows = math.ceil(len(paths) / columns)
         proc = _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-framerate", "1", "-i", str(Path(tmp) / "frame-%02d.jpg"), "-vf", f"tile={columns}x{rows}:padding=8:margin=8", "-frames:v", "1", destination])
         if proc.returncode:
             raise RuntimeError(f"contact sheet failed: {(proc.stderr or proc.stdout).strip()[-300:]}")
-    return times
+    return times, unlabelled_reason
 
 
 def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
@@ -502,10 +567,17 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
         if args.sheet:
             sheet_duration = stream_duration(video)
-            times = _make_sheet(args.video, args.sheet,
-                                sheet_duration if sheet_duration is not None else duration, args.sheet_frames, video_index,
-                                last_frame, max(0.0, stream_start(video) - stream_start(probe.get("format"))))
-            findings.append(Finding("INFO", "sheet", f"contact sheet saved to {args.sheet}; frames at " + ", ".join(f"{t:.2f}s" for t in times)))
+            reference = _sheet_reference(args.compare) if args.compare else None
+            times, unlabelled_reason = _make_sheet(args.video, args.sheet,
+                                                   sheet_duration if sheet_duration is not None else duration, args.sheet_frames,
+                                                   video_index, last_frame,
+                                                   max(0.0, stream_start(video) - stream_start(probe.get("format"))), reference)
+            message = f"contact sheet saved to {args.sheet}"
+            if reference is not None:
+                message += f", each tile beside {args.compare} at the same moment"
+            message += (f"; timestamps not printed on the tiles (drawtext: {unlabelled_reason})" if unlabelled_reason
+                        else "; timestamps printed on each tile")
+            findings.append(Finding("INFO", "sheet", message + "; frames at " + ", ".join(f"{t:.2f}s" for t in times)))
         return _result(args.video, probe, findings), int(any(f.level == "FAIL" for f in findings))
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, ValueError, RuntimeError) as exc:
         findings.append(Finding("FAIL", "qa", str(exc)))
@@ -547,8 +619,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("edit", "clip"), default="edit")
     parser.add_argument("--sheet", help="write an evenly sampled JPEG contact sheet")
     parser.add_argument("--sheet-frames", type=_positive_int, default=12)
+    parser.add_argument("--compare", metavar="REF",
+                        help="with --sheet: put REF's frame from the same moment beside each tile (recreating a reference)")
     parser.add_argument("--json", action="store_true", help="emit one JSON result object")
     args = parser.parse_args(argv)
+    if args.compare and not args.sheet:
+        parser.error("--compare needs --sheet")
     result, status = run_qa(args)
     if args.json:
         print(json.dumps(result, indent=2))

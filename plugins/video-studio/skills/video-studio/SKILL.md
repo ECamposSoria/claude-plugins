@@ -1,6 +1,6 @@
 ---
 name: video-studio
-description: Use when the user wants a video made, edited or finished — a music video, visualizer or lyric video for a song, cutting or tightening a recording, assembling AI-generated clips into a reel, promo or explainer animation, captions or subtitles, a voiceover or music bed, dubbing, repairing a generated clip that pops or mangles lettering, or "make one like this" from a pasted reel or YouTube link. Invoke with /video. Generating the clips or images themselves belongs to image-gen.
+description: Use when the user wants a video made, edited or finished — a music video, visualizer or lyric video for a song, cutting or tightening a recording, assembling AI-generated clips into a reel, promo or explainer animation, captions or subtitles, a voiceover or music bed, dubbing, repairing a generated clip that pops or mangles lettering, or "make one like this" or "recreate this" from a pasted reel or YouTube link. Invoke with /video. Generating the clips or images themselves belongs to image-gen.
 allowed-tools: Bash(npm:*), Bash(npx:*), Bash(ffmpeg:*), Bash(ffprobe:*), Bash(python3:*), Bash(uv:*), Bash(bash:*), Bash(docker:*), Bash(ssh:*), Bash(git:*), Bash(ls:*), Bash(cp:*), Bash(mkdir:*), Read, Write, Edit, Glob, Grep, AskUserQuestion, Skill
 ---
 
@@ -15,6 +15,10 @@ A pasted reel, Short, TikTok or YouTube link ("make one like this") → invoke t
 handles public Instagram reels: frames plus a Whisper transcript), then
 write a five-line brief before routing: hook length, average shot length, caption style, music energy, and
 what to keep versus change for our brand. Copy structure, never content.
+
+To match a reference closely, its timing and motion and not just its feel ("recreate this", "the same animation
+for our product"), follow [recreate.md](recreate.md) instead of the five-line brief: a timed shot list, then a
+build checked side by side against the reference.
 
 Costs, provider choices and tool traps from earlier pieces are in the shared media memory,
 `~/projects/image-video-generation/memory/README.md`: read it before generating or rendering.
@@ -72,12 +76,27 @@ uv run "$SKILL/scripts/qa_render.py" final.mp4 --expect-size 1080x1920 --expect-
 - `--expect-fps 24` for pieces built from AI clips.
 - `--mode clip` for a single generated shot (any frame jump is a pop); `--mode edit` for a cut piece (jumps
   are cuts).
-- Read the contact sheet with the Read tool and look at it. Fix every FAIL; explain or fix every WARN.
+- Read the contact sheet with the Read tool and look at it. Fix every FAIL; explain or fix every WARN. Each tile
+  carries its timestamp (the sheet finding says when ffmpeg had no font for them), so notes can point at a moment.
 - The checks are measurements, not proof. If a FAIL contradicts what the frames and `ffprobe` show on unusual
   media (an exotic container, timestamp offsets, odd edit lists), say which check and why it is wrong, and
   deliver with that note instead of forcing a re-encode.
 - Then deliver: copy to `/mnt/hgfs/vm-share/videos/<project>/` (the owner watches from Windows) and state the
   exact path. Keep drafts in a `borradores/` subfolder so the final is unambiguous.
+
+## Revisions: notes point at a moment
+
+The owner answers a draft with times ("0:04 white text, 0:07 a swamp instead of the pool") or a contact-sheet
+tile's timestamp. A screenshot without one: find its time on the sheet, or ask. For each note:
+
+1. Pull that frame from the draft and look at it, so the change is made to what is really there:
+   `ffmpeg -v error -ss 4.0 -i draft.mp4 -frames:v 1 rev-0400.jpg`.
+2. Find the scene playing then. Hyperframes: `npx hyperframes timeline --json` lists every clip with absolute
+   `absStart`/`absEnd`, sub-compositions included; scenes built as wrappers inside one long clip (trap 3 of the
+   Hyperframes leg) are found by their position in the GSAP timeline instead. Remotion: the `<Sequence>` whose
+   `from` to `from + durationInFrames` (frames ÷ fps) holds t.
+3. Gather every note of the round into one Codex brief, frame and scene named per note; one- or two-line tweaks
+   stay inline ("Who writes the code").
 
 ## Hybrid assembly
 

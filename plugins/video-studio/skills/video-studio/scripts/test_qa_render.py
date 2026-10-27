@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
@@ -171,6 +172,98 @@ def test_contact_sheet_is_written(tmp_path):
     assert sheet.read_bytes().startswith(b"\xff\xd8")
     data = result_json(proc)
     assert any(f["check"] == "sheet" and all(x in f["message"] for x in ("0.00s", "1.50s")) for f in data["findings"])
+
+
+def sheet_pixels(path: Path):
+    stream = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(path)],
+                                       capture_output=True, text=True, timeout=15).stdout)["streams"][0]
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         capture_output=True, timeout=15).stdout
+    return np.frombuffer(raw, np.uint8).reshape(stream["height"], stream["width"], 3).astype(int)
+
+
+def sheet_message(findings):
+    return next(f["message"] for f in findings if f["check"] == "sheet")
+
+
+def test_contact_sheet_prints_each_timestamp(tmp_path):
+    video = tmp_path / "green.mp4"
+    sheet = tmp_path / "labelled.jpg"
+    make_video(video, "color=c=green:s=320x240:r=24:d=2", 2)
+    proc = run_cli(video, "--sheet", str(sheet), "--sheet-frames", "4")
+    assert proc.returncode == 0, proc.stdout
+    assert "timestamps printed on each tile" in sheet_message(result_json(proc)["findings"])
+    pixels = sheet_pixels(sheet)
+    # white text only exists in the label box at each tile's top-left; pure green has no channel near 255
+    white = pixels.min(axis=2) > 180
+    for left in (8, 8 + 328, 8 + 2 * 328, 8 + 3 * 328):
+        assert white[8 + 6:8 + 34, left + 6:left + 70].any()
+        assert not white[8 + 60:8 + 240, left:left + 320].any()
+
+
+def test_contact_sheet_without_a_usable_font_is_made_unlabelled(tmp_path, monkeypatch, capsys):
+    video = tmp_path / "no-font.mp4"
+    sheet = tmp_path / "unlabelled.jpg"
+    make_video(video, "color=c=green:s=320x240:r=24:d=2", 2)
+    labelled_attempts = []
+    original_run = qa._run
+
+    def no_font(command, *args, **kwargs):
+        if any("drawtext" in part for part in command):
+            labelled_attempts.append(command)
+            # what ffmpeg 6.1 prints with an empty fontconfig
+            return subprocess.CompletedProcess(command, 254, "", (
+                "[Parsed_drawtext_1 @ 0x5f0d405b5ec0] Cannot find a valid font for the family Sans\n"
+                "[AVFilterGraph @ 0x5f0d405b6140] Error initializing filters\n"
+                "Failed to set value 'scale=320:-2,drawtext=text=0.00s:x=6:y=6' for option 'vf': No such file or directory\n"
+                "Error opening output files: No such file or directory\n"))
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(qa, "_run", no_font)
+    assert qa.main([str(video), "--sheet", str(sheet), "--sheet-frames", "4", "--json"]) == 0
+    message = sheet_message(json.loads(capsys.readouterr().out)["findings"])
+    assert ("timestamps not printed on the tiles (drawtext: [Parsed_drawtext_1 @ 0x5f0d405b5ec0] "
+            "Cannot find a valid font for the family Sans);") in message
+    assert message.endswith("frames at 0.00s, 0.50s, 1.00s, 1.50s")
+    assert len(labelled_attempts) == 1   # one failed try, then the whole sheet without labels
+    assert not (sheet_pixels(sheet).min(axis=2) > 180).any()
+
+
+def test_compare_sheet_puts_the_reference_beside_each_tile(tmp_path):
+    video = tmp_path / "ours.mp4"
+    reference = tmp_path / "reference.mp4"   # shorter, vertical, another frame rate
+    sheet = tmp_path / "compare.jpg"
+    make_video(video, "color=c=red:s=320x240:r=24:d=2", 2)
+    make_video(reference, "color=c=blue:s=180x320:r=30:d=1", 1, audio=False)
+    proc = run_cli(video, "--sheet", str(sheet), "--sheet-frames", "4", "--compare", str(reference))
+    assert proc.returncode == 0, proc.stdout
+    message = sheet_message(result_json(proc)["findings"])
+    assert f"each tile beside {reference} at the same moment" in message
+    assert message.endswith("frames at 0.00s, 0.50s, 1.00s, 1.50s")
+    pixels = sheet_pixels(sheet)
+    # each pair is 320 high: ours 426 wide, the reference 180; two pairs a row, 8 px margin and padding.
+    # The frames at 1.00s and 1.50s exist only because the reference is clamped to its last frame.
+    assert pixels.shape == (8 + 320 + 8 + 320 + 8, 8 + 606 + 8 + 606 + 8, 3)
+    for top in (8, 8 + 328):
+        for left in (8, 8 + 614):
+            ours, theirs = pixels[top + 200, left + 200], pixels[top + 200, left + 426 + 90]
+            assert ours[0] > 180 and ours[2] < 80
+            assert theirs[2] > 180 and theirs[0] < 80
+
+
+def test_compare_needs_a_sheet(tmp_path):
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(tmp_path / "any.mp4"), "--compare", str(tmp_path / "ref.mp4")],
+                          capture_output=True, text=True, timeout=15)
+    assert proc.returncode == 2 and "--compare needs --sheet" in proc.stderr
+
+
+def test_compare_with_a_missing_reference_fails_naming_it(tmp_path):
+    video = tmp_path / "ours.mp4"
+    make_video(video, "color=c=red:s=320x240:r=24:d=2", 2)
+    proc = run_cli(video, "--sheet", str(tmp_path / "sheet.jpg"), "--compare", str(tmp_path / "missing.mp4"))
+    assert proc.returncode == 1
+    assert any(f["level"] == "FAIL" and f"reference {tmp_path / 'missing.mp4'}: ffprobe failed" in f["message"]
+               for f in result_json(proc)["findings"])
 
 
 def test_nearly_all_silent_audio_fails_and_keeps_interval_warning(tmp_path):
