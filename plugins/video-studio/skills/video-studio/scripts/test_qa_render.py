@@ -251,6 +251,28 @@ def test_compare_sheet_puts_the_reference_beside_each_tile(tmp_path):
             assert theirs[2] > 180 and theirs[0] < 80
 
 
+def test_compare_sheet_keeps_each_moment_when_the_reference_is_slower(tmp_path):
+    video = tmp_path / "cut.mp4"   # 10 fps, red until 1s, then blue
+    reference = tmp_path / "slow.mp4"   # 1 fps: after a seek to 0.5s its first frame is 0.5s later
+    sheet = tmp_path / "slow-compare.jpg"
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+                           "-f", "lavfi", "-i", "color=c=red:s=320x240:r=10:d=1",
+                           "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=10:d=1",
+                           "-filter_complex", "[0:v][1:v]concat=n=2:v=1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                           str(video)], capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+    make_video(reference, "color=c=gray:s=320x240:r=1:d=2", 2, audio=False)
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--sheet", str(sheet), "--sheet-frames", "4",
+                           "--compare", str(reference), "--json"], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stdout
+    assert sheet_message(result_json(proc)["findings"]).endswith("frames at 0.00s, 0.50s, 1.00s, 1.50s")
+    pixels = sheet_pixels(sheet)
+    # pairs are 852 wide (426 + 426), two a row: 0.00s and 0.50s on top, 1.00s and 1.50s below
+    for (top, left), red in (((8, 8), True), ((8, 868), True), ((336, 8), False), ((336, 868), False)):
+        ours = pixels[top + 200, left + 200]
+        assert (ours[0] > 180 and ours[2] < 80) if red else (ours[2] > 180 and ours[0] < 80), (top, left, ours)
+
+
 def test_compare_needs_a_sheet(tmp_path):
     proc = subprocess.run([sys.executable, str(SCRIPT), str(tmp_path / "any.mp4"), "--compare", str(tmp_path / "ref.mp4")],
                           capture_output=True, text=True, timeout=15)

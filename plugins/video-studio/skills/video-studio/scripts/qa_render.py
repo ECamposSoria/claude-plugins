@@ -369,8 +369,10 @@ def _frame_command(video: str, video_index: int, timestamp: float, target: Path,
     if reference is None:
         return command + ["-map", f"0:{video_index}", "-frames:v", "1", "-vf", _frame_chain(label), "-q:v", "3", str(target)]
     reference_label = f"ref {reference_time:.2f}s" if labelled else None
-    graph = (f"[0:{video_index}]{_frame_chain(label, 320)}[a];"
-             f"[1:{reference.index}]{_frame_chain(reference_label, 320)}[b];[a][b]hstack")
+    # one frame from each seek, both at pts 0: hstack pairs by timestamp, and a slower reference's first
+    # frame after the seek would otherwise make it advance the draft to a later frame
+    graph = (f"[0:{video_index}]trim=end_frame=1,setpts=0,{_frame_chain(label, 320)}[a];"
+             f"[1:{reference.index}]trim=end_frame=1,setpts=0,{_frame_chain(reference_label, 320)}[b];[a][b]hstack")
     return command + ["-ss", _seek(reference_time), "-i", reference.path, "-filter_complex", graph,
                       "-frames:v", "1", "-q:v", "3", str(target)]
 
