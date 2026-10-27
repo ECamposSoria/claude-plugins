@@ -273,6 +273,39 @@ def test_compare_sheet_keeps_each_moment_when_the_reference_is_slower(tmp_path):
         assert (ours[0] > 180 and ours[2] < 80) if red else (ours[2] > 180 and ours[0] < 80), (top, left, ours)
 
 
+def make_cut(path: Path, rate: int):
+    """2 s at `rate` fps: red until 1s, then blue."""
+    made = subprocess.run(["ffmpeg", "-threads", "1", "-hide_banner", "-loglevel", "error", "-y",
+                           "-f", "lavfi", "-i", f"color=c=red:s=320x240:r={rate}:d=1",
+                           "-f", "lavfi", "-i", f"color=c=blue:s=320x240:r={rate}:d=1",
+                           "-filter_complex", "[0:v][1:v]concat=n=2:v=1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                           str(path)], capture_output=True, text=True, timeout=15)
+    assert made.returncode == 0, made.stderr
+
+
+def test_on_screen_picks_the_frame_shown_at_a_moment():
+    frames = [0.0, 0.5, 1.0, 1.5]
+    assert [qa._on_screen(frames, t) for t in (0.0, 0.49, 0.5, 0.667, 1.0, 9.0)] == [0.0, 0.0, 0.5, 0.5, 1.0, 1.5]
+    assert qa._on_screen([0.2, 0.4], 0.1) == 0.2   # before the first frame: the first one
+    assert qa._on_screen([0.0, 1 / 3, 2 / 3], 1 / 3) == pytest.approx(1 / 3)   # a float sum of the same moment
+
+
+def test_compare_sheet_shows_the_frames_on_screen_between_frames(tmp_path):
+    video, reference, sheet = tmp_path / "draft.mp4", tmp_path / "reference.mp4", tmp_path / "between.jpg"
+    make_cut(video, 2)
+    make_cut(reference, 1)
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(video), "--sheet", str(sheet), "--sheet-frames", "3",
+                           "--compare", str(reference), "--json"], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stdout
+    assert sheet_message(result_json(proc)["findings"]).endswith("frames at 0.00s, 0.67s, 1.33s")
+    pixels = sheet_pixels(sheet)
+    # 0.67s falls between frames of both: each shows the frame on screen (red), not the next one (blue)
+    for (top, left), red in (((8, 8), True), ((8, 868), True), ((336, 8), False)):
+        for side in (left + 200, left + 426 + 200):
+            pixel = pixels[top + 200, side]
+            assert (pixel[0] > 180 and pixel[2] < 80) if red else (pixel[2] > 180 and pixel[0] < 80), (top, side, pixel)
+
+
 def test_compare_needs_a_sheet(tmp_path):
     proc = subprocess.run([sys.executable, str(SCRIPT), str(tmp_path / "any.mp4"), "--compare", str(tmp_path / "ref.mp4")],
                           capture_output=True, text=True, timeout=15)

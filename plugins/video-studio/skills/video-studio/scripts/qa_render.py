@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
 import os
@@ -347,7 +348,7 @@ class SheetReference:
     path: str
     index: int
     offset: float
-    last_frame: float | None
+    frames: list[float]
 
 
 def _seek(timestamp: float) -> str:
@@ -362,18 +363,36 @@ def _frame_chain(label: str | None, height: int | None = None) -> str:
     return chain
 
 
-def _frame_command(video: str, video_index: int, timestamp: float, target: Path, labelled: bool,
-                   reference: SheetReference | None = None, reference_time: float = 0.0) -> list[str]:
-    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", _seek(timestamp), "-i", video]
-    label = f"{timestamp:.2f}s" if labelled else None
+def _frame_times(path: str, index: int, format_start: float, timeout: float) -> list[float]:
+    """When each decoded frame of one stream starts, on the timeline input -ss uses (the file's start is 0)."""
+    proc = _run(["ffprobe", "-v", "error", "-select_streams", str(index), "-show_entries",
+                 "frame=best_effort_timestamp_time", "-of", "csv=p=0", path], timeout=timeout)
+    if proc.returncode:
+        raise RuntimeError(f"{path}: listing frame times failed: {proc.stderr.strip()[-300:]}")
+    # a frame carrying side data prints a trailing field: "0.000000,"
+    starts = (_number(line.split(",", 1)[0]) for line in proc.stdout.splitlines())
+    times = sorted({start - format_start for start in starts if start is not None})
+    if not times:
+        raise RuntimeError(f"{path}: no frame times to compare")
+    return times
+
+
+def _on_screen(frames: list[float], moment: float) -> float:
+    """Start of the frame shown at `moment`: the last one starting at or before it (the first, before it)."""
+    return frames[max(0, bisect.bisect_right(frames, moment + 1e-6) - 1)]
+
+
+def _frame_command(video: str, video_index: int, seek: float, label: str | None, target: Path,
+                   reference: SheetReference | None = None, reference_seek: float = 0.0,
+                   reference_label: str | None = None) -> list[str]:
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", _seek(seek), "-i", video]
     if reference is None:
         return command + ["-map", f"0:{video_index}", "-frames:v", "1", "-vf", _frame_chain(label), "-q:v", "3", str(target)]
-    reference_label = f"ref {reference_time:.2f}s" if labelled else None
-    # one frame from each seek, both at pts 0: hstack pairs by timestamp, and a slower reference's first
-    # frame after the seek would otherwise make it advance the draft to a later frame
+    # each input is seeked to the start of a frame, so that frame comes first; trim and setpts keep exactly
+    # it at pts 0, because hstack pairs by timestamp and would otherwise advance one side to meet the other
     graph = (f"[0:{video_index}]trim=end_frame=1,setpts=0,{_frame_chain(label, 320)}[a];"
              f"[1:{reference.index}]trim=end_frame=1,setpts=0,{_frame_chain(reference_label, 320)}[b];[a][b]hstack")
-    return command + ["-ss", _seek(reference_time), "-i", reference.path, "-filter_complex", graph,
+    return command + ["-ss", _seek(reference_seek), "-i", reference.path, "-filter_complex", graph,
                       "-frames:v", "1", "-q:v", "3", str(target)]
 
 
@@ -387,13 +406,15 @@ def _sheet_reference(path: str) -> SheetReference:
         raise RuntimeError(f"reference {path} has no video stream")
     index = int(video["index"])
     duration = _number((probe.get("format") or {}).get("duration")) or stream_duration(video)
-    _, _, last_frame, _ = _jump_indices(path, pass_timeout(duration), index)
-    return SheetReference(path, index, max(0.0, stream_start(video) - stream_start(probe.get("format"))), last_frame)
+    start = stream_start(probe.get("format"))
+    return SheetReference(path, index, max(0.0, stream_start(video) - start),
+                          _frame_times(path, index, start, pass_timeout(duration)))
 
 
 def _make_sheet(video: str, destination: str, duration: float, frames: int, video_index: int = 0,
                 last_frame: float | None = None, offset: float = 0.0,
-                reference: SheetReference | None = None) -> tuple[list[float], str | None]:
+                reference: SheetReference | None = None,
+                own_frames: list[float] | None = None) -> tuple[list[float], str | None]:
     """Return the sampled times and, when the timestamps could not be printed, ffmpeg's reason."""
     count = max(1, frames)
     # offset = where the picture starts on the file's timeline (video that starts after the audio)
@@ -406,16 +427,19 @@ def _make_sheet(video: str, destination: str, duration: float, frames: int, vide
         paths = []
         for index, timestamp in enumerate(times):
             target = Path(tmp) / f"frame-{index:02d}.jpg"
-            reference_time = 0.0
+            seek, reference_seek, reference_moment = timestamp, 0.0, 0.0
             if reference is not None:
-                # the same moment of the picture, clamped to the reference's last frame when it is shorter
-                reference_time = reference.offset + (timestamp - offset)
-                if reference.last_frame is not None:
-                    reference_time = min(reference_time, reference.last_frame)
+                # the same moment of both pictures, each showing its frame on screen then; a reference shorter
+                # than ours stays on its last frame, and its label gives that frame's start
+                seek = _on_screen(own_frames, timestamp) if own_frames else timestamp
+                reference_moment = reference.offset + (timestamp - offset)
+                reference_seek = _on_screen(reference.frames, reference_moment)
+                reference_moment = min(reference_moment, reference.frames[-1])
             # drawtext needs a usable font; without one the sheet is still made, unlabelled
             for labelled in ((False,) if unlabelled_reason else (True, False)):
                 target.unlink(missing_ok=True)
-                proc = _run(_frame_command(video, video_index, timestamp, target, labelled, reference, reference_time))
+                proc = _run(_frame_command(video, video_index, seek, f"{timestamp:.2f}s" if labelled else None, target,
+                                           reference, reference_seek, f"ref {reference_moment:.2f}s" if labelled else None))
                 if not proc.returncode and target.exists():
                     break
                 if labelled:
@@ -570,10 +594,13 @@ def run_qa(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if args.sheet:
             sheet_duration = stream_duration(video)
             reference = _sheet_reference(args.compare) if args.compare else None
+            own_frames = (_frame_times(args.video, video_index, stream_start(probe.get("format")), limit)
+                          if reference else None)
             times, unlabelled_reason = _make_sheet(args.video, args.sheet,
                                                    sheet_duration if sheet_duration is not None else duration, args.sheet_frames,
                                                    video_index, last_frame,
-                                                   max(0.0, stream_start(video) - stream_start(probe.get("format"))), reference)
+                                                   max(0.0, stream_start(video) - stream_start(probe.get("format"))), reference,
+                                                   own_frames)
             message = f"contact sheet saved to {args.sheet}"
             if reference is not None:
                 message += f", each tile beside {args.compare} at the same moment"
