@@ -36,7 +36,7 @@ main() {
         local out
         if out="$(docker inspect -f '{{.State.Running}}' voicestudio 2>&1)"; then
             if [ "$out" = true ]; then echo running; else echo stopped; fi
-        elif printf '%s' "$out" | grep -qi 'no such'; then echo stopped
+        elif printf '%s' "$out" | grep -qiE 'no such (object|container): *voicestudio'; then echo stopped
         else echo unknown; fi
     }
     mine() { [ "$(cat "$S.pid" 2>/dev/null)" = "$$" ]; }
