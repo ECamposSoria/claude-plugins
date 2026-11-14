@@ -21,39 +21,49 @@ mkdir -p "$DIR"
 
 # Runs inside the laptop's WSL. cmd.exe sits between ssh and WSL and mangles nested quotes, so the script goes
 # in on stdin and only plain words go on the command line. Everything is inside main() so bash has read all of
-# it before any command could consume stdin.
+# it before any command could consume stdin. Its status lines start with VSR: so container logs can't pass
+# for them. The lock makes "the deadline passed, stop" and "extend the deadline" exclude each other.
 read -r -d '' REMOTE <<'EOF' || true
 main() {
-    local C=~/voicestudio/docker-compose.yml S=/dev/shm/voicestudio-hold free t
+    local C=~/voicestudio/docker-compose.yml S=/dev/shm/voicestudio-hold free t deadline
     command -v nvidia-smi >/dev/null || PATH="$PATH:/usr/lib/wsl/lib"
     dc() { docker compose -p voicestudio -f "$C" "$@"; }
     running() { [ "$(docker inspect -f '{{.State.Running}}' voicestudio 2>/dev/null)" = true ]; }
+    publish() { echo "$1" > "$S.$$" && mv -f "$S.$$" "$S"; }
+    exec 9>"$S.lock"
     case "$1" in
     hold)   # hold MINUTES MIN_FREE_MIB
         if ! running; then
             free="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)"
             if ! [ "$free" -ge "$3" ] 2>/dev/null; then
-                echo "BUSY ${free:-?} MiB of VRAM free, $3 needed. Containers there:"
+                echo "VSR:BUSY ${free:-?} MiB of VRAM free, $3 needed. Containers there:"
                 docker ps --format '  {{.Names}} ({{.Image}})'
                 return 3
             fi
-            dc up -d --wait --wait-timeout 300 || { echo "FAILED docker compose up"; dc logs --tail 30; dc down; return 1; }
+            dc up -d --wait --wait-timeout 300 || { echo "VSR:FAILED docker compose up"; dc logs --tail 30; dc down; return 1; }
         fi
-        echo $(( $(date +%s) + $2 * 60 )) > "$S"
-        echo READY
-        while running && [ "$(date +%s)" -lt "$(cat "$S" 2>/dev/null || echo 0)" ]; do sleep 15; done
-        ! running || dc down
-        rm -f "$S"
-        echo STOPPED ;;
+        flock 9; publish $(( $(date +%s) + $2 * 60 )); flock -u 9
+        echo VSR:READY
+        while running; do
+            flock 9
+            deadline="$(cat "$S" 2>/dev/null)" || deadline=""
+            if [ -z "$deadline" ] || [ "$(date +%s)" -ge "$deadline" ]; then rm -f "$S"; flock -u 9; break; fi
+            flock -u 9
+            sleep 15
+        done
+        flock 9; rm -f "$S"; flock -u 9
+        if running; then dc down || echo "VSR:FAILED docker compose down"; fi
+        echo VSR:STOPPED ;;
     extend) # extend MINUTES
-        [ -f "$S" ] || { echo NOHOLD; return 1; }
+        flock 9
+        [ -f "$S" ] || { echo VSR:NOHOLD; return 1; }
         t=$(( $(date +%s) + $2 * 60 ))
-        [ "$t" -le "$(cat "$S")" ] || echo "$t" > "$S"
-        echo "UNTIL $(cat "$S")" ;;
+        [ "$t" -le "$(cat "$S")" ] || publish "$t"
+        echo "VSR:UNTIL $(cat "$S")" ;;
     down)
-        rm -f "$S"
-        ! running || dc down
-        echo DOWN ;;
+        flock 9; rm -f "$S"; flock -u 9
+        if running; then dc down || { echo "VSR:FAILED docker compose down"; return 1; }; fi
+        echo VSR:DOWN ;;
     esac
 }
 main "$@" </dev/null
@@ -66,6 +76,7 @@ EOF
 remote() { printf '%s\n' "$REMOTE" | timeout 120 ssh "${SSH_OPTS[@]}" "$HOST" "wsl -d Ubuntu -- bash -l -s -- $*" 2>&1 | tr -d '\r'; }
 answers() { curl -fsS -m 5 -o /dev/null "$URL/health" 2>/dev/null; }
 holding() { systemctl --user is-active -q "$UNIT"; }
+wsl_state() { timeout 20 ssh "${SSH_OPTS[@]}" "$HOST" "wsl -l -v" 2>/dev/null | tr -d '\0\r' | awk '/Ubuntu/ {print $(NF-1)}'; }   # no launch
 wedged_help() {
     echo "  Check: ssh $HOST \"wsl -d Ubuntu -u root -- dmesg\" | grep -E 'Timed out|CaptureCrash'  (if that hangs too, WSL is stuck)" >&2
     echo "  Clearing it takes 'wsl --terminate Ubuntu' on the laptop, which kills everything in that distro: ask the owner." >&2
@@ -83,13 +94,14 @@ wait_ready() {
     local i log
     for ((i = 0; i < 84; i++)); do              # 7 min: WSL boot, image start and the model load
         if ! holding; then
-            log="$(tr -d '\r' < "$DIR/hold.log" 2>/dev/null)"
+            log="$(tr -d '\r' < "$DIR/hold.log" 2>/dev/null)" || log=""
             case "$log" in
-                *BUSY*) echo "voicestudio_remote: GPU busy: ${log#*BUSY }" >&2
+                *VSR:BUSY*) echo "voicestudio_remote: GPU busy: ${log#*VSR:BUSY }" >&2
                         echo "Ask the owner before sharing it, or use ElevenLabs / the CPU copy." >&2; return 3 ;;
                 *E_UNEXPECTED*) echo "voicestudio_remote: WSL on the laptop is stuck (Wsl/Service/E_UNEXPECTED)." >&2
                         wedged_help; return 3 ;;
-                *FAILED*) echo "voicestudio_remote: the container did not start:" >&2; printf '%s\n' "$log" | tail -30 >&2; return 1 ;;
+                *"VSR:FAILED docker compose up"*) echo "voicestudio_remote: the container did not start:" >&2
+                        printf '%s\n' "$log" | tail -30 >&2; return 1 ;;
                 *) printf '%s\n' "$log" | tail -5 > "$DIR/last-failure.log"; return 4 ;;
             esac
         fi
@@ -98,45 +110,68 @@ wait_ready() {
     done
     echo "voicestudio_remote: nothing answered at $URL after 7 min." >&2
     if ! systemctl --user is-active -q host-gpu-tunnel; then
-        echo "  The tunnel is down: systemctl --user status host-gpu-tunnel" >&2
-    elif ! grep -q READY "$DIR/hold.log" 2>/dev/null; then
+        echo "  The tunnel is down: systemctl --user status host-gpu-tunnel. The container may still be up: run 'down'." >&2
+    elif ! grep -q VSR:READY "$DIR/hold.log" 2>/dev/null; then
         echo "  The WSL launch never got going, which is how a stuck WSL looks." >&2; wedged_help
     fi
     systemctl --user stop "$UNIT" 2>/dev/null || true
     return 3
 }
 
-up() {
-    local mins="$1" rc out
-    if holding; then
-        if grep -q READY "$DIR/hold.log" 2>/dev/null; then
-            out="$(remote extend "$mins")" || true
-            case "$out" in
-                *UNTIL*) echo "voicestudio_remote: hold extended to $(date -d "@${out##*UNTIL }" +%H:%M)" ;;
-                *) echo "voicestudio_remote: could not extend the hold: $out" >&2; return 1 ;;
-            esac
-        fi
-    else
-        start_hold "$mins"
-    fi
-    rc=0; wait_ready || rc=$?
+# Start a hold and wait for it, retrying once when the WSL session ends early (a launch collision).
+fresh_hold() {
+    local rc=0
+    start_hold "$1"; wait_ready || rc=$?
     if [ "$rc" -eq 4 ]; then
-        sleep 5; start_hold "$mins"; rc=0; wait_ready || rc=$?
-        [ "$rc" -ne 4 ] || { echo "voicestudio_remote: the WSL session ended before VoiceStudio came up:" >&2
-                             cat "$DIR/last-failure.log" >&2; rc=3; }
+        sleep 5; rc=0; start_hold "$1"; wait_ready || rc=$?
+        if [ "$rc" -eq 4 ]; then
+            echo "voicestudio_remote: the WSL session ended before VoiceStudio came up:" >&2
+            cat "$DIR/last-failure.log" >&2; rc=3
+        fi
     fi
-    [ "$rc" -eq 0 ] && echo "voicestudio_remote: ready at $URL (run 'down' when done)"
     return "$rc"
 }
 
+up() {
+    local mins="$1" rc=0 out i
+    if ! holding; then
+        fresh_hold "$mins" || return $?
+    else
+        # Join the running hold: let it come up, then push its deadline out to ours.
+        wait_ready || rc=$?
+        if [ "$rc" -eq 4 ]; then fresh_hold "$mins" || return $?
+        elif [ "$rc" -ne 0 ]; then return "$rc"
+        else
+            out="$(remote extend "$mins")" || true
+            case "$out" in
+                *VSR:UNTIL*) echo "voicestudio_remote: hold runs until $(date -d "@${out##*VSR:UNTIL }" +%H:%M)" ;;
+                *VSR:NOHOLD*)       # it reached its deadline as we joined: let it finish, then start afresh
+                    for ((i = 0; i < 24; i++)); do holding || break; sleep 5; done
+                    systemctl --user stop "$UNIT" 2>/dev/null || true
+                    fresh_hold "$mins" || return $? ;;
+                *) echo "voicestudio_remote: could not extend the hold: $out" >&2; return 1 ;;
+            esac
+        fi
+    fi
+    echo "voicestudio_remote: ready at $URL (run 'down' when done)"
+}
+
 down() {
-    local i out
-    if ! holding && ! answers; then echo "voicestudio_remote: not running"; return 0; fi
+    local i out state
+    if ! holding && ! answers; then
+        state="$(wsl_state)" || state=""
+        case "$state" in
+            Stopped) echo "voicestudio_remote: not running (the laptop's WSL is off)"; return 0 ;;
+            Running) ;;     # a lost tunnel or hold can leave the container up: stop it explicitly
+            *) echo "voicestudio_remote: laptop unreachable ($HOST); can't confirm VoiceStudio is stopped" >&2; return 3 ;;
+        esac
+    fi
     out="$(remote down)" || true
     for ((i = 0; i < 12; i++)); do holding || break; sleep 5; done
     systemctl --user stop "$UNIT" 2>/dev/null || true
     case "$out" in
-        *DOWN*) echo "voicestudio_remote: stopped; WSL shuts itself off once nothing else holds it" ;;
+        *VSR:DOWN*) echo "voicestudio_remote: stopped; WSL shuts itself off once nothing else holds it" ;;
+        *VSR:FAILED*) echo "voicestudio_remote: the container did not stop:" >&2; printf '%s\n' "$out" | tail -20 >&2; return 1 ;;
         *) echo "voicestudio_remote: could not reach WSL to stop the container: $out" >&2; wedged_help; return 3 ;;
     esac
 }
@@ -146,7 +181,7 @@ status() {
     if holding; then echo "hold: active ($(systemctl --user show -p ActiveEnterTimestamp --value "$UNIT"))"; else echo "hold: none"; fi
     if answers; then echo "VoiceStudio: answering at $URL"; else echo "VoiceStudio: not answering at $URL"; fi
     echo "tunnel: $(systemctl --user is-active host-gpu-tunnel 2>&1)"
-    wsl="$(timeout 20 ssh "${SSH_OPTS[@]}" "$HOST" "wsl -l -v" 2>&1 | tr -d '\0\r' | awk '/Ubuntu/ {print $(NF-1)}')" || true
+    wsl="$(wsl_state)" || wsl=""
     echo "laptop WSL: ${wsl:-unreachable}"
 }
 
@@ -154,10 +189,10 @@ case "${1:-}" in
     up)
         mins=30
         if [ "${2:-}" = --for ]; then mins="${3:-}"; fi
-        if ! [[ "$mins" =~ ^[0-9]+$ ]] || [ "$mins" -lt 1 ] || [ "$mins" -gt 720 ]; then
+        if ! [[ "$mins" =~ ^[0-9]+$ ]] || [ "$((10#$mins))" -lt 1 ] || [ "$((10#$mins))" -gt 720 ]; then
             echo "usage: voicestudio_remote.sh up [--for MINUTES (1-720)]" >&2; exit 2
         fi
-        up "$mins" ;;
+        up "$((10#$mins))" ;;
     down) down ;;
     status) status ;;
     *) echo "usage: voicestudio_remote.sh up [--for MINUTES] | down | status" >&2; exit 2 ;;
