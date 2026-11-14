@@ -31,10 +31,12 @@ read -r -d '' REMOTE <<'EOF' || true
 main() {
     local C=~/voicestudio/docker-compose.yml S=/dev/shm/voicestudio-hold free t deadline pid st i=0
     command -v nvidia-smi >/dev/null || PATH="$PATH:/usr/lib/wsl/lib"
-    dc() { docker compose -p voicestudio -f "$C" "$@"; }
+    # Every docker call is bounded: a daemon that accepts connections but never answers would otherwise keep
+    # the holder (and the WSL session and GPU) forever, since nothing on the VM side can kill it.
+    dc() { local limit="$1"; shift; timeout "$limit" docker compose -p voicestudio -f "$C" "$@"; }
     cstate() {  # running, stopped (absent counts as stopped) or unknown (docker did not answer clearly)
         local out err rc=0
-        out="$(docker inspect -f '{{.State.Running}}' voicestudio 2>"$S.err.$$")" || rc=$?
+        out="$(timeout 20 docker inspect -f '{{.State.Running}}' voicestudio 2>"$S.err.$$")" || rc=$?
         err="$(cat "$S.err.$$" 2>/dev/null)"; rm -f "$S.err.$$"
         if [ "$rc" -eq 0 ] && [ "$out" = true ]; then echo running
         elif [ "$rc" -eq 0 ] && [ "$out" = false ]; then echo stopped
@@ -48,7 +50,7 @@ main() {
             if ! mine; then return 0; fi
             if [ "$n" -ge 20 ]; then echo "VSR:FAILED container $st after docker compose down"; return 1; fi
             if [ "$n" -gt 0 ]; then sleep 15; fi
-            dc down || true
+            dc 120 down || true
             n=$((n + 1))
         done
     }
@@ -68,13 +70,13 @@ main() {
         if [ ! -f "$S" ]; then flock -u 9; release; echo VSR:CANCELLED; return 0; fi
         flock -u 9
         if [ "$(cstate)" != running ]; then
-            free="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)"
+            free="$(timeout 20 nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)"
             if ! [ "$free" -ge "$3" ] 2>/dev/null; then
                 echo "VSR:BUSY ${free:-?} MiB of VRAM free, $3 needed. Containers there:"
-                docker ps --format '  {{.Names}} ({{.Image}})'
+                timeout 20 docker ps --format '  {{.Names}} ({{.Image}})'
                 release; return 3
             fi
-            dc up -d --wait --wait-timeout 300 || { echo "VSR:FAILED docker compose up"; dc logs --tail 30; teardown; release; return 1; }
+            dc 600 up -d --wait --wait-timeout 300 || { echo "VSR:FAILED docker compose up"; dc 20 logs --tail 30; teardown; release; return 1; }
         fi
         flock 9
         if ! mine; then flock -u 9; echo VSR:HANDOFF; return 0; fi
@@ -108,7 +110,7 @@ main() {
             sleep 2; i=$((i + 1))
         done
         st="$(cstate)"
-        if [ "$st" != stopped ]; then dc down || true; st="$(cstate)"; fi
+        if [ "$st" != stopped ]; then dc 120 down || true; st="$(cstate)"; fi
         if [ "$st" != stopped ]; then echo "VSR:FAILED container state after docker compose down: $st"; return 1; fi
         echo VSR:DOWN ;;
     esac
@@ -123,7 +125,10 @@ EOF
 remote() { printf '%s\n' "$REMOTE" | timeout 400 ssh "${SSH_OPTS[@]}" "$HOST" "wsl -d Ubuntu -- bash -l -s -- $*" 2>&1 | tr -d '\r'; }
 answers() { curl -fsS -m 5 -o /dev/null "$URL/health" 2>/dev/null; }
 holding() { systemctl --user is-active -q "$UNIT"; }
-wsl_state() { timeout 20 ssh "${SSH_OPTS[@]}" "$HOST" "wsl -l -v" 2>/dev/null | tr -d '\0\r' | awk '/Ubuntu/ {print $(NF-1)}'; }   # no launch
+wsl_state() {      # the Ubuntu distro's state, read without launching anything
+    timeout 20 ssh "${SSH_OPTS[@]}" "$HOST" "wsl -l -v" 2>/dev/null | tr -d '\0\r' \
+        | awk '{ if ($1 == "*") { n = $2; st = $3 } else { n = $1; st = $2 } } n == "Ubuntu" { print st }'
+}
 wedged_help() {
     echo "  Check: ssh $HOST \"wsl -d Ubuntu -u root -- dmesg\" | grep -E 'Timed out|CaptureCrash'  (if that hangs too, WSL is stuck)" >&2
     echo "  Clearing it takes 'wsl --terminate Ubuntu' on the laptop, which kills everything in that distro: ask the owner." >&2
