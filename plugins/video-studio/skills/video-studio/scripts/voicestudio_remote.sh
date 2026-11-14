@@ -32,14 +32,26 @@ main() {
     local C=~/voicestudio/docker-compose.yml S=/dev/shm/voicestudio-hold free t deadline pid st i=0
     command -v nvidia-smi >/dev/null || PATH="$PATH:/usr/lib/wsl/lib"
     dc() { docker compose -p voicestudio -f "$C" "$@"; }
-    cstate() {  # running, stopped (absent counts as stopped) or unknown (docker did not answer)
-        local out
-        if out="$(docker inspect -f '{{.State.Running}}' voicestudio 2>&1)"; then
-            if [ "$out" = true ]; then echo running; else echo stopped; fi
-        elif printf '%s' "$out" | grep -qiE 'no such (object|container): *voicestudio'; then echo stopped
+    cstate() {  # running, stopped (absent counts as stopped) or unknown (docker did not answer clearly)
+        local out err rc=0
+        out="$(docker inspect -f '{{.State.Running}}' voicestudio 2>"$S.err.$$")" || rc=$?
+        err="$(cat "$S.err.$$" 2>/dev/null)"; rm -f "$S.err.$$"
+        if [ "$rc" -eq 0 ] && [ "$out" = true ]; then echo running
+        elif [ "$rc" -eq 0 ] && [ "$out" = false ]; then echo stopped
+        elif [ "$rc" -ne 0 ] && printf '%s' "$err" | grep -qiE 'no such (object|container): *voicestudio'; then echo stopped
         else echo unknown; fi
     }
     mine() { [ "$(cat "$S.pid" 2>/dev/null)" = "$$" ]; }
+    teardown() {    # holder only: stop the container, retrying while docker misbehaves (~5 min), unless replaced
+        local n=0 st
+        while st="$(cstate)"; [ "$st" != stopped ]; do
+            if ! mine; then return 0; fi
+            if [ "$n" -ge 20 ]; then echo "VSR:FAILED container $st after docker compose down"; return 1; fi
+            if [ "$n" -gt 0 ]; then sleep 15; fi
+            dc down || true
+            n=$((n + 1))
+        done
+    }
     publish() { echo "$1" > "$S.$$" && mv -f "$S.$$" "$S"; }
     later() {   # push the deadline to MINUTES from now, never earlier than it already is (call under lock 9)
         t=$(( $(date +%s) + $1 * 60 ))
@@ -62,7 +74,7 @@ main() {
                 docker ps --format '  {{.Names}} ({{.Image}})'
                 release; return 3
             fi
-            dc up -d --wait --wait-timeout 300 || { echo "VSR:FAILED docker compose up"; dc logs --tail 30; dc down; release; return 1; }
+            dc up -d --wait --wait-timeout 300 || { echo "VSR:FAILED docker compose up"; dc logs --tail 30; teardown; release; return 1; }
         fi
         flock 9
         if ! mine; then flock -u 9; echo VSR:HANDOFF; return 0; fi
@@ -80,7 +92,7 @@ main() {
         else
             flock -u 9; echo VSR:CANCELLED  # `down` arrived during startup
         fi
-        if [ "$(cstate)" != stopped ]; then dc down || echo "VSR:FAILED docker compose down"; fi
+        if ! teardown; then release; return 1; fi
         release
         echo VSR:STOPPED ;;
     extend) # extend MINUTES
