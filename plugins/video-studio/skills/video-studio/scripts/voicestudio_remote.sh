@@ -22,26 +22,40 @@ mkdir -p "$DIR"
 # Runs inside the laptop's WSL. cmd.exe sits between ssh and WSL and mangles nested quotes, so the script goes
 # in on stdin and only plain words go on the command line. Everything is inside main() so bash has read all of
 # it before any command could consume stdin. Its status lines start with VSR: so container logs can't pass
-# for them. $S holds the deadline and is the claim: the holder writes it (and its pid to $S.pid) before
-# starting the container, `down` removes it, and a holder that finds it gone stops the container and exits.
-# The lock makes "the deadline passed, stop" and "extend the deadline" exclude each other.
+# for them. $S holds the deadline and is the claim; $S.pid names the holder that owns it. A holder claims before
+# starting the container, `down` removes the claim, and a holder that finds it gone stops the container and
+# exits. A newer holder (after the VM lost the unit of an older one) takes the claim over and waits on the
+# holder lock until the older one is gone; the older one, no longer named in $S.pid, exits without touching the
+# container. Lock 9 makes "the deadline passed, stop", "extend" and "take over" exclude each other.
 read -r -d '' REMOTE <<'EOF' || true
 main() {
-    local C=~/voicestudio/docker-compose.yml S=/dev/shm/voicestudio-hold free t deadline pid i=0
+    local C=~/voicestudio/docker-compose.yml S=/dev/shm/voicestudio-hold free t deadline pid st i=0
     command -v nvidia-smi >/dev/null || PATH="$PATH:/usr/lib/wsl/lib"
     dc() { docker compose -p voicestudio -f "$C" "$@"; }
-    running() { [ "$(docker inspect -f '{{.State.Running}}' voicestudio 2>/dev/null)" = true ]; }
+    cstate() {  # running, stopped (absent counts as stopped) or unknown (docker did not answer)
+        local out
+        if out="$(docker inspect -f '{{.State.Running}}' voicestudio 2>&1)"; then
+            if [ "$out" = true ]; then echo running; else echo stopped; fi
+        elif printf '%s' "$out" | grep -qi 'no such'; then echo stopped
+        else echo unknown; fi
+    }
+    mine() { [ "$(cat "$S.pid" 2>/dev/null)" = "$$" ]; }
     publish() { echo "$1" > "$S.$$" && mv -f "$S.$$" "$S"; }
-    later() {   # push the deadline to MINUTES from now, never earlier than it already is (call under the lock)
+    later() {   # push the deadline to MINUTES from now, never earlier than it already is (call under lock 9)
         t=$(( $(date +%s) + $1 * 60 ))
         if [ ! -f "$S" ] || [ "$t" -gt "$(cat "$S")" ]; then publish "$t"; fi
     }
-    release() { flock 9; rm -f "$S"; if [ "$(cat "$S.pid" 2>/dev/null)" = "$$" ]; then rm -f "$S.pid"; fi; flock -u 9; }
+    release() { flock 9; if mine; then rm -f "$S" "$S.pid"; fi; flock -u 9; }
     exec 9>"$S.lock"
     case "$1" in
     hold)   # hold MINUTES MIN_FREE_MIB
         flock 9; later "$2"; echo $$ > "$S.pid"; flock -u 9
-        if ! running; then
+        exec 7>"$S.holder"; flock 7
+        flock 9
+        if ! mine; then flock -u 9; echo VSR:HANDOFF; return 0; fi
+        if [ ! -f "$S" ]; then flock -u 9; release; echo VSR:CANCELLED; return 0; fi
+        flock -u 9
+        if [ "$(cstate)" != running ]; then
             free="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)"
             if ! [ "$free" -ge "$3" ] 2>/dev/null; then
                 echo "VSR:BUSY ${free:-?} MiB of VRAM free, $3 needed. Containers there:"
@@ -51,12 +65,14 @@ main() {
             dc up -d --wait --wait-timeout 300 || { echo "VSR:FAILED docker compose up"; dc logs --tail 30; dc down; release; return 1; }
         fi
         flock 9
+        if ! mine; then flock -u 9; echo VSR:HANDOFF; return 0; fi
         if [ -f "$S" ]; then
             later "$2"; flock -u 9
             echo VSR:READY
-            while running; do
+            while [ "$(cstate)" != stopped ]; do
                 sleep 5
                 flock 9
+                if ! mine; then flock -u 9; echo VSR:HANDOFF; return 0; fi
                 deadline="$(cat "$S" 2>/dev/null)" || deadline=""
                 if [ -z "$deadline" ] || [ "$(date +%s)" -ge "$deadline" ]; then rm -f "$S"; flock -u 9; break; fi
                 flock -u 9
@@ -64,7 +80,7 @@ main() {
         else
             flock -u 9; echo VSR:CANCELLED  # `down` arrived during startup
         fi
-        if running; then dc down || echo "VSR:FAILED docker compose down"; fi
+        if [ "$(cstate)" != stopped ]; then dc down || echo "VSR:FAILED docker compose down"; fi
         release
         echo VSR:STOPPED ;;
     extend) # extend MINUTES
@@ -76,8 +92,12 @@ main() {
     down)
         flock 9; rm -f "$S"; pid="$(cat "$S.pid" 2>/dev/null)" || pid=""; flock -u 9
         # The holder notices within 5 s, or once its startup returns (up to 300 s), and stops the container.
-        while [ "$i" -lt 165 ] && [ -n "$pid" ] && [ -f "$S.pid" ] && kill -0 "$pid" 2>/dev/null; do sleep 2; i=$((i + 1)); done
-        if running; then dc down || { echo "VSR:FAILED docker compose down"; return 1; }; fi
+        while [ "$i" -lt 165 ] && [ -n "$pid" ] && [ "$(cat "$S.pid" 2>/dev/null)" = "$pid" ] && kill -0 "$pid" 2>/dev/null; do
+            sleep 2; i=$((i + 1))
+        done
+        st="$(cstate)"
+        if [ "$st" != stopped ]; then dc down || true; st="$(cstate)"; fi
+        if [ "$st" != stopped ]; then echo "VSR:FAILED container state after docker compose down: $st"; return 1; fi
         echo VSR:DOWN ;;
     esac
 }
