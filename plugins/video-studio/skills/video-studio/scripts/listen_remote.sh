@@ -9,7 +9,9 @@
 set -euo pipefail
 
 HOST="${LISTEN_HOST:-lenovo-nat}"
-BUSY_MIB="${LISTEN_GPU_BUSY_MIB:-1500}"   # the idle desktop holds ~850 MiB; more means another job is on the GPU
+# Judged by free VRAM, not used: the Windows desktop alone holds 0.8-2.6 GB depending on what is open. The job
+# peaked at +2.3 GB (Whisper large-v3-turbo; Demucs +0.9 GB), measured 2026-11-14 on the RTX 4070 (8 GB).
+MIN_FREE_MIB="${LISTEN_MIN_FREE_MIB:-3500}"
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ssh_l() { ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 "$HOST" "$@"; }
 # cmd.exe sits between ssh and WSL and mangles nested quotes, so each remote script is uploaded to a file
@@ -52,13 +54,13 @@ if [ "$force" -eq 0 ]; then
     done
 fi
 
-state="$(remote 'nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1;
+state="$(remote 'nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1;
 docker image inspect video-studio-listener:0.1.0-cu128 >/dev/null 2>&1 && echo image-ok || echo image-missing' \
     2>/dev/null | tr -d '\r')" || { echo "listen_remote: laptop unreachable ($HOST)" >&2; exit 3; }
-used="$(printf '%s\n' "$state" | head -1)"
+free="$(printf '%s\n' "$state" | head -1)"
 case "$state" in *image-ok*) ;; *) echo "listen_remote: image missing on the laptop; build it (setup/listener/README.md)" >&2; exit 3 ;; esac
-if ! [ "$used" -eq "$used" ] 2>/dev/null || [ "$used" -gt "$BUSY_MIB" ]; then
-    echo "listen_remote: GPU busy (${used} MiB in use). Containers there:" >&2
+if ! [ "$free" -ge "$MIN_FREE_MIB" ] 2>/dev/null; then
+    echo "listen_remote: GPU busy (${free:-?} MiB of VRAM free, $MIN_FREE_MIB needed). Containers there:" >&2
     remote 'docker ps --format "  {{.Names}} ({{.Image}})"' >&2 || true
     echo "Ask the owner before sharing it, or run the CPU container." >&2
     exit 3
