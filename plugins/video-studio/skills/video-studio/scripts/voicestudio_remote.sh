@@ -44,13 +44,14 @@ main() {
         else echo unknown; fi
     }
     mine() { [ "$(cat "$S.pid" 2>/dev/null)" = "$$" ]; }
-    teardown() {    # holder only: stop the container, retrying while docker misbehaves (~5 min), unless replaced
-        local n=0 st
+    teardown() {    # holder only: stop the container, retrying while docker misbehaves, for 5 min in all, unless replaced
+        local end=$((SECONDS + 300)) n=0 st left
         while st="$(cstate)"; [ "$st" != stopped ]; do
             if ! mine; then return 0; fi
-            if [ "$n" -ge 20 ]; then echo "VSR:FAILED container $st after docker compose down"; return 1; fi
             if [ "$n" -gt 0 ]; then sleep 15; fi
-            dc 120 down || true
+            left=$((end - SECONDS))
+            if [ "$left" -le 0 ]; then echo "VSR:FAILED container $st after docker compose down"; return 1; fi
+            dc "$((left < 120 ? left : 120))" down || true
             n=$((n + 1))
         done
     }
@@ -147,8 +148,8 @@ start_hold() {
 
 # 0 ready, 1 failed, 3 busy or stuck, 4 the hold ended early for another reason (worth one retry).
 wait_ready() {
-    local i log
-    for ((i = 0; i < 84; i++)); do              # 7 min: WSL boot, image start and the model load
+    local log end=$((SECONDS + 420))            # 7 min in all: WSL boot, image start and the model load
+    while [ "$SECONDS" -lt "$end" ]; do
         if ! holding; then
             log="$(tr -d '\r' < "$DIR/hold.log" 2>/dev/null)" || log=""
             case "$log" in
