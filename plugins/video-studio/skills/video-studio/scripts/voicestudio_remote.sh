@@ -123,11 +123,24 @@ main() {
 main "$@" </dev/null
 EOF
 
-# A short WSL call. A launch that collides with another one while the distro boots fails after ~10 s (the
-# OpenAI Codex app polls WSL every few seconds while it has a WSL project open); WSL before 3.0.5 wedged instead,
-# failing every launch with Wsl/Service/E_UNEXPECTED. Killing our ssh does not kill wsl.exe on Windows, so the
-# timeout only frees this script.
+# A short WSL call. A launch that collides with another one while the distro boots fails after ~10 s (anything
+# else that launches WSL; the Codex desktop app's WSL remote connection retried every 20 s); WSL before 3.0.5
+# wedged instead, failing every launch with Wsl/Service/E_UNEXPECTED. Killing our ssh does not kill wsl.exe on
+# Windows, so the timeout only frees this script.
 remote() { printf '%s\n' "$REMOTE" | timeout 400 ssh "${SSH_OPTS[@]}" "$HOST" "wsl -d Ubuntu -- bash -l -s -- $*" 2>&1 | tr -d '\r'; }
+# The same, retried after 5 s and 10 s when it comes back quickly without a VSR: line (a collision, not a hang).
+# Both actions it runs, extend and down, are safe to repeat.
+remote_try() {
+    local out n t
+    for n in 1 2 3; do
+        t=$SECONDS; out="$(remote "$@")" || true
+        case "$out" in *VSR:*) break ;; esac
+        if [ "$n" -eq 3 ] || [ $((SECONDS - t)) -ge 60 ]; then break; fi
+        sleep $((n * 5))
+    done
+    printf '%s\n' "$out"
+}
+reachable() { timeout 20 ssh "${SSH_OPTS[@]}" "$HOST" exit >/dev/null 2>&1; }
 answers() { curl -fsS -m 5 -o /dev/null "$URL/health" 2>/dev/null; }
 holding() { systemctl --user is-active -q "$UNIT"; }
 wsl_state() {      # the Ubuntu distro's state, read without launching anything
@@ -146,9 +159,9 @@ start_hold() {
         ssh "${SSH_OPTS[@]}" "$HOST" "wsl -d Ubuntu -- bash -l -s -- hold $1 $MIN_FREE_MIB"
 }
 
-# 0 ready, 1 failed, 3 busy or stuck, 4 the hold ended early for another reason (worth one retry).
+# 0 ready, 1 failed, 3 busy or stuck, 4 the hold ended early for another reason (worth a retry).
 wait_ready() {
-    local log end=$((SECONDS + 420))            # 7 min in all: WSL boot, image start and the model load
+    local log end=$((SECONDS + 420)) ready_at="" healed=0   # 7 min in all: WSL boot, image start and the model load
     while [ "$SECONDS" -lt "$end" ]; do
         if ! holding; then
             log="$(tr -d '\r' < "$DIR/hold.log" 2>/dev/null)" || log=""
@@ -164,7 +177,15 @@ wait_ready() {
             esac
         fi
         # /health can answer before compose's --wait returns; the hold exists only once its holder says READY.
-        if answers && grep -q VSR:READY "$DIR/hold.log" 2>/dev/null; then return 0; fi
+        if grep -q VSR:READY "$DIR/hold.log" 2>/dev/null; then
+            if answers; then return 0; fi
+            # Up on the laptop but not reachable from here: the tunnel is down or stale (e.g. after the laptop slept).
+            ready_at="${ready_at:-$SECONDS}"
+            if [ "$healed" -eq 0 ] && [ $((SECONDS - ready_at)) -ge 20 ]; then
+                echo "voicestudio_remote: up on the laptop but not reachable here; restarting host-gpu-tunnel" >&2
+                systemctl --user restart host-gpu-tunnel 2>/dev/null || true; healed=1
+            fi
+        fi
         sleep 5
     done
     echo "voicestudio_remote: nothing answered at $URL after 7 min." >&2
@@ -177,22 +198,23 @@ wait_ready() {
     return 3
 }
 
-# Start a hold and wait for it, retrying once when the WSL session ends early (a launch collision).
+# Start a hold and wait for it. A WSL session that ends early (a launch collision) is retried after 5 s and 15 s.
 fresh_hold() {
-    local rc=0
-    start_hold "$1"; wait_ready || rc=$?
-    if [ "$rc" -eq 4 ]; then
-        sleep 5; rc=0; start_hold "$1"; wait_ready || rc=$?
-        if [ "$rc" -eq 4 ]; then
-            echo "voicestudio_remote: the WSL session ended before VoiceStudio came up:" >&2
-            cat "$DIR/last-failure.log" >&2; rc=3
-        fi
-    fi
-    return "$rc"
+    local rc n
+    for n in 1 2 3; do
+        rc=0; start_hold "$1"; wait_ready || rc=$?
+        if [ "$rc" -ne 4 ]; then return "$rc"; fi
+        if [ "$n" -lt 3 ]; then sleep $((n == 1 ? 5 : 15)); fi
+    done
+    echo "voicestudio_remote: the WSL session ended before VoiceStudio came up, 3 times:" >&2
+    cat "$DIR/last-failure.log" >&2
+    return 3
 }
 
 up() {
     local mins="$1" rc=0 out i
+    reachable || { echo "voicestudio_remote: laptop unreachable ($HOST): off, asleep or off the network" >&2; return 3; }
+    systemctl --user is-active -q host-gpu-tunnel || systemctl --user start host-gpu-tunnel 2>/dev/null || true
     if ! holding; then
         fresh_hold "$mins" || return $?
     else
@@ -201,7 +223,7 @@ up() {
         if [ "$rc" -eq 4 ]; then fresh_hold "$mins" || return $?
         elif [ "$rc" -ne 0 ]; then return "$rc"
         else
-            out="$(remote extend "$mins")" || true
+            out="$(remote_try extend "$mins")"
             case "$out" in
                 *VSR:UNTIL*) echo "voicestudio_remote: hold runs until $(date -d "@${out##*VSR:UNTIL }" +%H:%M)" ;;
                 *VSR:NOHOLD*)       # it reached its deadline as we joined: let it finish, then start afresh
@@ -217,6 +239,7 @@ up() {
 
 down() {
     local i out state
+    reachable || { echo "voicestudio_remote: laptop unreachable ($HOST); can't confirm VoiceStudio is stopped" >&2; return 3; }
     if ! holding && ! answers; then
         state="$(wsl_state)" || state=""
         case "$state" in
@@ -225,7 +248,7 @@ down() {
             *) echo "voicestudio_remote: laptop unreachable ($HOST); can't confirm VoiceStudio is stopped" >&2; return 3 ;;
         esac
     fi
-    out="$(remote down)" || true
+    out="$(remote_try down)"
     for ((i = 0; i < 12; i++)); do holding || break; sleep 5; done
     if holding; then
         systemctl --user stop "$UNIT" 2>/dev/null || true

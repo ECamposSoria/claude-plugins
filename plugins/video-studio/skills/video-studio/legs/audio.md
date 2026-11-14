@@ -56,13 +56,16 @@ U=http://127.0.0.1:13900                              # every curl below works t
 ```
 
 - Exit 3 from `up` means the laptop can't take it (unreachable, GPU busy, WSL stuck): the message says which.
+  `up` checks the laptop answers before anything else, starts the tunnel if it is down, and restarts it when
+  VoiceStudio is up on the laptop but not reachable from the VM (e.g. after the laptop slept).
   GPU busy means another session holds it (Fenorium runs ~6 GB models): ask the owner, or use ElevenLabs / the CPU copy.
 - The hold ends by itself at the deadline (`up` again extends it), so a forgotten `down` can't hold the GPU for long.
   `"$R" status` shows the hold, the tunnel and whether WSL is running, without waking WSL.
 - On the GPU send the whole script as one block (6.8 s for the test script; sentence chunks took 10 s).
 - Voices cloned on the laptop live in the laptop's `voicestudio-data` volume, not the VM's: clone where you render.
 - 🔴 Don't add your own `ssh lenovo-nat 'wsl …'` calls around it. A launch that collides with another one while
-  the laptop's distro boots fails (the OpenAI Codex app polls WSL every few seconds); the script retries once.
+  the laptop's distro boots fails (anything else that launches WSL, e.g. a Codex desktop app with a WSL remote
+  connection, which retries every 20 s); the script retries a colliding launch twice.
   WSL before 3.0.5 wedged instead: every launch then failed with `Wsl/Service/E_UNEXPECTED` until
   `wsl --terminate Ubuntu`, which kills everything in that distro (ask the owner).
 
