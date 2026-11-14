@@ -27,6 +27,8 @@ closely: `skills/video-studio/recreate.md`. Setup state: `skills/video-studio/se
 - `listen.py`: song → stems, beats, bars, drum hits, loudness, sections, notes, chords, timed lyrics,
   per-frame features and a README brief. Runs in `setup/listener/` (Docker). Tests: `test_listen.py`, in that image.
 - `listen_remote.sh`: the same on the laptop's RTX 4070 over ssh; exit 3 = use the CPU image.
+- `voicestudio_remote.sh up|down|status`: VoiceStudio on the laptop's GPU on demand, holding a WSL session open
+  until `down` or a deadline; exit 3 = use ElevenLabs or the CPU copy. ShellCheck it in a container.
 - `sync_check.py`: a music video's audio is the song, unshifted and full length; picture accents against the
   beats. Tests: `test_sync_check.py`, run in a container.
 - `qa_render.py`: pre-delivery check (probe, black, freeze, silence, loudness, one-frame pops, contact sheet with

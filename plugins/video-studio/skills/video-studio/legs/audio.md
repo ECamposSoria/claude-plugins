@@ -42,22 +42,29 @@ copy only for a cloned voice with the laptop off, in the background.
 
 The VM keeps an always-on SSH tunnel to the laptop (`host-gpu-tunnel.service`, see
 `~/projects/uniteapp/memory/platform/host-gpu-tunnel.md`), so the laptop's VoiceStudio answers at
-`http://127.0.0.1:13900`. The container itself is started on demand inside the laptop's WSL Docker:
+`http://127.0.0.1:13900`. The laptop's WSL is off between jobs; `scripts/voicestudio_remote.sh` wakes it, starts
+the container and holds a WSL session open while you work (WSL stops a distro with no open session, containers
+included):
 
 ```bash
-L='ssh -o BatchMode=yes lenovo-nat'                  # laptop over the fixed VMware NAT address
-# 🔴 the GPU is shared with other sessions (Fenorium runs 6 GB models on it): check it is free first
-$L 'wsl -- bash -lc "nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader; docker ps --format {{.Names}}"'
-$L 'wsl -- bash -lc "docker compose -p voicestudio -f ~/voicestudio/docker-compose.yml up -d --wait --wait-timeout 300"'
+R="$SKILL/scripts/voicestudio_remote.sh"
+"$R" up --for 30        # checks the GPU has 4.5 GB free, starts it, returns once :13900 answers (~30 s cold)
+# the first request after a cold start also loads the model (~50 s); after that 4.6 s of speech took 1.3 s
 U=http://127.0.0.1:13900                              # every curl below works the same with $U in place of :3900
 # ... generate / clone / consent exactly as in the CPU section, against $U ...
-$L 'wsl -- bash -lc "docker compose -p voicestudio -f ~/voicestudio/docker-compose.yml down"'   # free the GPU
+"$R" down               # free the GPU; WSL then shuts itself off
 ```
 
+- Exit 3 from `up` means the laptop can't take it (unreachable, GPU busy, WSL stuck): the message says which.
+  GPU busy means another session holds it (Fenorium runs ~6 GB models): ask the owner, or use ElevenLabs / the CPU copy.
+- The hold ends by itself at the deadline (`up` again extends it), so a forgotten `down` can't hold the GPU for long.
+  `"$R" status` shows the hold, the tunnel and whether WSL is running, without waking WSL.
 - On the GPU send the whole script as one block (6.8 s for the test script; sentence chunks took 10 s).
 - Voices cloned on the laptop live in the laptop's `voicestudio-data` volume, not the VM's: clone where you render.
-- No answer on 13900 means the laptop is off, asleep, or WSL Docker is not up: `systemctl --user status
-  host-gpu-tunnel` on the VM, then fall back to ElevenLabs or the CPU copy.
+- 🔴 Don't add your own `ssh lenovo-nat 'wsl …'` calls around it. A launch that collides with another one while
+  the laptop's distro boots fails (the OpenAI Codex app polls WSL every few seconds); the script retries once.
+  WSL before 3.0.5 wedged instead: every launch then failed with `Wsl/Service/E_UNEXPECTED` until
+  `wsl --terminate Ubuntu`, which kills everything in that distro (ask the owner).
 
 ### VoiceStudio on the VM CPU (fallback): how to run it
 
