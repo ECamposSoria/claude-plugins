@@ -69,14 +69,18 @@ main() {
         if ! mine; then flock -u 9; echo VSR:HANDOFF; return 0; fi
         if [ ! -f "$S" ]; then flock -u 9; release; echo VSR:CANCELLED; return 0; fi
         flock -u 9
-        if [ "$(cstate)" != running ]; then
+        st="$(cstate)"
+        while [ "$st" = unknown ] && [ "$i" -lt 6 ]; do sleep 5; st="$(cstate)"; i=$((i + 1)); done
+        # Start only from a confirmed stop. Running, or still unknown, means hold what is there: the loop and
+        # teardown below keep the deadline, and the claim is only released once the container is confirmed stopped.
+        if [ "$st" = stopped ]; then
             free="$(timeout 20 nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)"
             if ! [ "$free" -ge "$3" ] 2>/dev/null; then
                 echo "VSR:BUSY ${free:-?} MiB of VRAM free, $3 needed. Containers there:"
                 timeout 20 docker ps --format '  {{.Names}} ({{.Image}})'
                 release; return 3
             fi
-            dc 600 up -d --wait --wait-timeout 300 || { echo "VSR:FAILED docker compose up"; dc 20 logs --tail 30; teardown; release; return 1; }
+            dc 600 up -d --wait --wait-timeout 300 || { echo "VSR:FAILED docker compose up"; dc 20 logs --tail 30; if teardown; then release; fi; return 1; }
         fi
         flock 9
         if ! mine; then flock -u 9; echo VSR:HANDOFF; return 0; fi
@@ -94,7 +98,7 @@ main() {
         else
             flock -u 9; echo VSR:CANCELLED  # `down` arrived during startup
         fi
-        if ! teardown; then release; return 1; fi
+        teardown || return 1
         release
         echo VSR:STOPPED ;;
     extend) # extend MINUTES
