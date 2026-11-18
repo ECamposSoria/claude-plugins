@@ -55,10 +55,10 @@ A composition (Hyperframes, Remotion) is mostly code, and its build and fix roun
 moves the bulk of the work onto the ChatGPT plan. Claude keeps the brief, the look at every still and draft, the
 final render and the checks; Codex writes files only (no renders, no containers).
 
-| Piece | Who | Why (checked 2026-11-04) |
+| Piece | Who | Why (checked 2026-11-04; 6.2 models since 2026-11-18) |
 |---|---|---|
-| 3D scenes: three.js characters, cameras, lighting, shaders | Codex `gpt-6-astra`: **max** for the first build, medium for fix rounds | Leads DesignArena's 3D board: Astra max 1513 (#1), Claude Opus 5.5 1470, Astra at default effort 1467, GPT-6.1 Sol 1436. Max is the only setting with a measured lead; it costs about 2× medium, and Astra 5× Sol per token, so spend it on 3D only |
-| Everything else: 2D, typography, lyrics, per-scene pieces, data plumbing | Codex `gpt-6.1-sol`: **xhigh** for the first build of a piece, medium for the batched fix rounds and mechanical edits | Arena WebDev 1751 vs Astra's 1773 at about a fifth of the cost per task; OpenAI's model guide puts Sol xhigh at "polished deliverables, connected visual systems" and Sol medium at "deliverables you expect to revise"; 500K context |
+| 3D scenes: three.js characters, cameras, lighting, shaders | Codex `gpt-6.2-astra`: **max** for the first build, medium for fix rounds | In the previous generation Astra led DesignArena's 3D board: Astra max 1513 (#1), Claude Opus 5.5 1470, Astra at default effort 1467, GPT-6.1 Sol 1436. OpenAI names 3D designs among the places 6.2 Astra shows its gains. Max is the only setting with a measured lead; it costs about 2× medium, and 6.2 Astra 4× Sol per token, so spend it on 3D only |
+| Everything else: 2D, typography, lyrics, per-scene pieces, data plumbing | Codex `gpt-6.2-sol`: **xhigh** for the first build of a piece, medium for the batched fix rounds and mechanical edits | 6.1 Sol scored 1751 on Arena WebDev against Astra's 1773 at about a fifth of the cost per task, and 6.2 Sol bills the same per token as 6.1 Sol. OpenAI's model guide puts Sol xhigh at "polished deliverables, connected visual systems" and Sol medium at "deliverables you expect to revise"; 500K context |
 | A one- or two-line tweak (a colour, one timing) | Claude, inline | A delegation round (10–20 min) costs more than the edit |
 
 `gpt-6-luna` is 20× cheaper again but ranks far lower on visual code (DesignArena 3D 1213): not for anything that

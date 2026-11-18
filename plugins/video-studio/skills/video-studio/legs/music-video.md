@@ -80,8 +80,8 @@ Post it (checkpoint 1).
 
 ## Step 3: build with Hyperframes
 
-Codex writes the project and Claude reviews it (SKILL.md "Who writes the code": 3D scenes on `gpt-6-astra`,
-everything else on `gpt-6.1-sol`). The brief carries `treatment.md`, the song's `README.md`, the paths of
+Codex writes the project and Claude reviews it (SKILL.md "Who writes the code": 3D scenes on `gpt-6.2-astra`,
+everything else on `gpt-6.2-sol`). The brief carries `treatment.md`, the song's `README.md`, the paths of
 `analysis.json` and `features.json`, the size, fps and duration, and every rule below. Follow
 [animation-hyperframes.md](animation-hyperframes.md) and its traps, plus:
 
